@@ -1,2 +1,2 @@
-# Chad
+# kioto
 simple cli chat
