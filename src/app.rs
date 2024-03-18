@@ -1,97 +1,87 @@
 use std::env;
 
-pub enum CommandOption {
+pub enum CommandRequest {
     Version,
     Help,
     Create {
         room_id: String,
-        password: Option<String>,
+        has_password: bool,
     },
-    NewJoin {
+    Join {
         room_address: String,
-        username: String,
-        password: Option<String>,
-    },
-    OldJoin {
-        room_id: String,
-        username: String,
-        password: Option<String>,
+        username: Option<String>,
     },
     Delete {
         room_id: String,
-        password: Option<String>,
     },
     List,
+    Invalid,
 }
 
-pub struct CLI;
+pub fn get_command_request() -> CommandRequest {
+    let args: Vec<String> = env::args().collect();
+    let len = args.len();
 
-impl CLI {
-    pub fn get_command_option() -> CommandOption {
-        let args: Vec<String> = env::args().collect();
+    if len < 2 {
+        return CommandRequest::Invalid;
+    }
 
-        let command = &args[1];
-        match command.as_str() {
-            "version" => CommandOption::Version,
-            "help" => CommandOption::Help,
-            "create" => {
-                if args.len() < 3+1 {
-                    eprintln!("Usage: kioto create <room_id>");
-                    std::process::exit(1);
-                }
-                CommandOption::Create {
-                    room_id: args[2].clone(),
-                    password: Some(args[4].clone()),
-                }
-            }
-            "join" => {
-                if args.len() < 3+1 {
-                    eprintln!("Usage: program_name join-room <room_address> [room_key]");
-                    std::process::exit(1);
-                }
-                CommandOption::OldJoin { room_id: (), username: (), password: () }
-                CommandOption::NewJoin { room_address: (), username: (), password: () }
-            }
-            "del" => {
-                if args.len() < 3+1 {
-                    eprintln!("Usage: kioto delete <room_id> pass <password>");
-                    std::process::exit(1);
-                }
-                CommandOption::Delete {
-                    room_id: args[2].clone(),
-                    password: Some(args[3].clone())
-                }
-            }
-            "roomlist" => {
-                if args.len() < 2+1 {
-                    eprintln!("Usage: kioto list");
-                    std::process::exit(1);
-                }
-                CommandOption::List
-            }
-            _ => {
-                eprintln!("Type 'kioto help' for more info");
-                std::process::exit(1);
-            }
-        }
+    let command = &args[1];
+    match command.as_str() {
+        "version" => CommandRequest::Version,
+        "help" => CommandRequest::Help,
+        "create" => match len {
+            3 => CommandRequest::Create {
+                room_id: args[2].clone(),
+                has_password: true,
+            },
+            4 if args[2] == "-n" => CommandRequest::Create {
+                room_id: args[3].clone(),
+                has_password: false,
+            },
+            _ => CommandRequest::Invalid,
+        },
+        "join" => match len {
+            3 => CommandRequest::Join {
+                room_address: args[2].clone(),
+                username: None,
+            },
+            4 => CommandRequest::Join {
+                room_address: args[2].clone(),
+                username: Some(args[3].clone()),
+            },
+            _ => CommandRequest::Invalid,
+        },
+        "list" => CommandRequest::List,
+        "del" => match len {
+            3 => CommandRequest::Delete {
+                room_id: args[2].clone(),
+            },
+            _ => CommandRequest::Invalid,
+        },
+        _ => CommandRequest::Invalid,
     }
 }
 
-pub struct App {
-    cli: CLI,
-}
+pub struct App {}
 
 impl App {
     pub fn run() {
-        let options = CLI::get_command_option();
+        let options = get_command_request();
         match options {
-            CommandOption::Version => todo!(),
-            CommandOption::Help => todo!(),
-            CommandOption::Create { room_id, password } => todo!(),
-            CommandOption::NewJoin { room_address, username, password } => todo!(),
-            CommandOption::OldJoin { room_id, username, password } => todo!(),
-            CommandOption::Delete { room_id, password } => todo!(),
-            CommandOption::List => todo!(),
+            CommandRequest::Version => println!("yes"),
+            CommandRequest::Help => println!("yes"),
+            CommandRequest::Create {
+                room_id,
+                has_password,
+            } => println!("yes"),
+            CommandRequest::Join {
+                room_address,
+                username,
+            } => println!("yes"),
+            CommandRequest::Delete { room_id } => println!("yes"),
+            CommandRequest::List => println!("yes"),
+            CommandRequest::Invalid => println!("shit!"),
         }
     }
 }
