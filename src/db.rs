@@ -1,18 +1,38 @@
-use rusqlite::*;
-use crate::room::{ChatRoom, Message};
+use std::path::Path;
 
-const FILEPATH: &str = " ";
+use polodb_core::{Collection, Database};
 
-pub struct ChatDb {}
+use crate::schema::{Messsage, RoomData};
 
-impl ChatDb {
-    pub fn new() -> Self {
-        Self {}
+pub struct DbRepo {
+    rooms: Collection<RoomData>,
+    messages: Collection<Messsage>,
+}
+
+impl DbRepo {
+    pub fn init(filepath: &Path) -> Self {
+        let db = Database::open_file(filepath).unwrap();
+
+        DbRepo {
+            rooms: db.collection("rooms"),
+            messages: db.collection("messages"),
+        }
     }
 
-    pub fn get_chatroom(room_id: String) {}
-    pub fn get_all_chatrooms() {}
-    pub fn add_chatroom(room: ChatRoom) {}
-    pub fn update_chatroom(room: ChatRoom) {}
-    pub fn delete_chatroom(room: ChatRoom) {}
+    pub(crate) fn memory_init() -> Self {
+        let db = Database::open_memory().unwrap();
+
+        DbRepo {
+            rooms: db.collection("rooms"),
+            messages: db.collection("messages"),
+        }
+    }
+
+    pub fn rooms<'a>(&self) -> &'a Collection<RoomData> {
+        &self.rooms
+    }
+
+    pub fn messages<'a>(&self) -> &'a Collection<Messsage> {
+        &self.messages
+    }
 }
