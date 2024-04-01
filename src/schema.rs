@@ -4,8 +4,9 @@ pub struct Room {
     pub room_id: String,
     pub room_address: String,
     pub password: Option<String>,
-    pub host: User,
     pub guests: Vec<User>,
+    pub locked_addressed: Vec<String>,
+    pub are_you_host: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -13,8 +14,8 @@ pub struct RoomData {
     pub room_id: String,
     pub room_address: String,
     pub password: Option<String>,
-    pub host_id: u32,
-    pub guests_ids: Vec<u32>,
+    pub locked_addresses: Vec<String>,
+    pub are_you_host: bool,
 }
 
 impl Room {
@@ -23,27 +24,49 @@ impl Room {
             room_id: self.room_id,
             room_address: self.room_address,
             password: self.password,
-            host_id: self.host.id,
-            guests_ids: self.guests.iter().map(|guest| guest.id).collect(),
+            locked_addresses: self.locked_addressed,
+            are_you_host: self.are_you_host,
+        }
+    }
+}
+
+pub struct User {
+    pub address: String,
+    pub username: String,
+    pub color: Color,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct UserData {
+    pub username: String,
+    pub color: Color,
+}
+
+impl User {
+    pub fn prepare_data(&self) -> UserData {
+        UserData {
+            username: self.username,
+            color: self.color,
         }
     }
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct User {
-    pub id: u32,
-    pub username: String,
-    pub address: String,
-    pub color: Color,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct Messsage {
+pub struct Message {
     pub msg_id: u32,
-    pub sender_id: u32,
+    pub sender_address: String,
     pub chatroom_id: String,
     pub content: String,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Color(i32, i32, i32);
+
+#[derive(Serialize, Deserialize)]
+pub struct AppOpt(Opt, bool);
+
+#[derive(Serialize, Deserialize)]
+pub enum Opt {
+    RememberPasswords,
+    DarkMode,
+}

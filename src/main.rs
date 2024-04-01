@@ -5,8 +5,8 @@ mod network;
 mod schema;
 mod ui;
 
-use app::App;
+use app::{get_command_request, App};
 
 fn main() {
-    App::run();
+    App::run(get_command_request());
 }

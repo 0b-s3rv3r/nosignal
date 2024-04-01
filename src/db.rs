@@ -2,11 +2,13 @@ use std::path::Path;
 
 use polodb_core::{Collection, Database};
 
-use crate::schema::{Messsage, RoomData};
+use crate::schema::{AppOpt, Message, RoomData, UserData};
 
 pub struct DbRepo {
-    rooms: Collection<RoomData>,
-    messages: Collection<Messsage>,
+    pub rooms: Collection<RoomData>,
+    pub messages: Collection<Message>,
+    pub options: Collection<AppOpt>,
+    pub user_local_data: Collection<UserData>,
 }
 
 impl DbRepo {
@@ -14,8 +16,10 @@ impl DbRepo {
         let db = Database::open_file(filepath).unwrap();
 
         DbRepo {
-            rooms: db.collection("rooms"),
-            messages: db.collection("messages"),
+            rooms: db.collection::<RoomData>("rooms"),
+            messages: db.collection::<Message>("messages"),
+            options: db.collection::<AppOpt>("options"),
+            user_local_data: db.collection::<UserData>("local_data"),
         }
     }
 
@@ -23,16 +27,10 @@ impl DbRepo {
         let db = Database::open_memory().unwrap();
 
         DbRepo {
-            rooms: db.collection("rooms"),
-            messages: db.collection("messages"),
+            rooms: db.collection::<RoomData>("rooms"),
+            messages: db.collection::<Message>("messages"),
+            options: db.collection::<AppOpt>("options"),
+            user_local_data: db.collection::<UserData>("local_data"),
         }
-    }
-
-    pub fn rooms<'a>(&self) -> &'a Collection<RoomData> {
-        &self.rooms
-    }
-
-    pub fn messages<'a>(&self) -> &'a Collection<Messsage> {
-        &self.messages
     }
 }

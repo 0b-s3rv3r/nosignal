@@ -4,6 +4,7 @@ use crate::error::DbError;
 
 use polodb_core::bson::doc;
 use std::env;
+use std::path::Path;
 
 pub enum CommandRequest {
     Version,
@@ -73,13 +74,13 @@ pub fn get_command_request() -> CommandRequest {
     }
 }
 
-pub struct App {
-    db: DbRepo
-}
+pub struct App;
 
 impl App {
-    pub fn run() {
-        match get_command_request() {
+    pub fn run(runopt: CommandRequest) {
+        App::init();
+
+        match runopt {
             CommandRequest::Version => println!(env!("CARGO_PKG_VERSION")),
             CommandRequest::Help => Self::print_help(),
             CommandRequest::Create {
@@ -97,6 +98,10 @@ impl App {
         }
     }
 
+    pub fn init() {
+        DbRepo::init(Path::new(""));
+    }
+
     fn print_help() {
         println!("Commands:\n
             kioto version - print version of kioto\n
@@ -109,8 +114,8 @@ impl App {
             kioto del <room_id> - delete room");
     }
 
-    fn create_room(&mut self, room_id: &str, password: bool) -> Result<(), DbError> {
-        if let Some(_) = self.db.rooms().find_one(doc! {"room_id": room_id}).unwrap() {
+    fn create_room(room_id: &str, password: bool) -> Result<(), DbError> {
+        if let Some(_) = self.db.rooms.find_one(doc! {"room_id": room_id}).unwrap() {
             return Err(DbError::AlreadyExistingId);
         }
 
