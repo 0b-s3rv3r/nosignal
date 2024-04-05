@@ -12,6 +12,14 @@ use std::{
     io::{self, stdout, Stdout},
 };
 
+// use crate::schema::AppOption;
+//
+// pub enum ChatEvent {
+//     SendMessage(String),
+//     KickUser(String),
+//     SetOption(AppOption),
+// }
+
 pub struct ChatUi {
     term: Terminal<CrosstermBackend<Stdout>>,
     exit: bool,

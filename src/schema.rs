@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use strum::EnumString;
 
 pub struct Room {
     pub room_id: String,
@@ -30,25 +31,11 @@ impl Room {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct User {
     pub address: String,
     pub username: String,
     pub color: Color,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct UserData {
-    pub username: String,
-    pub color: Color,
-}
-
-impl User {
-    pub fn prepare_data(&self) -> UserData {
-        UserData {
-            username: self.username,
-            color: self.color,
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -60,13 +47,10 @@ pub struct Message {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct Color(i32, i32, i32);
+pub struct Color(pub i32, pub i32, pub i32);
 
-#[derive(Serialize, Deserialize)]
-pub struct AppOpt(Opt, bool);
-
-#[derive(Serialize, Deserialize)]
-pub enum Opt {
-    RememberPasswords,
-    DarkMode,
+#[derive(Serialize, Deserialize, EnumString)]
+pub enum AppOption {
+    RememberPasswords(bool),
+    LightMode(bool),
 }

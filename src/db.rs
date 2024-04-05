@@ -2,13 +2,13 @@ use std::path::Path;
 
 use polodb_core::{Collection, Database};
 
-use crate::schema::{AppOpt, Message, RoomData, UserData};
+use crate::schema::{AppOpt, Message, RoomData, User};
 
 pub struct DbRepo {
     pub rooms: Collection<RoomData>,
     pub messages: Collection<Message>,
     pub options: Collection<AppOpt>,
-    pub user_local_data: Collection<UserData>,
+    pub user_local_data: Collection<User>,
 }
 
 impl DbRepo {
@@ -19,7 +19,7 @@ impl DbRepo {
             rooms: db.collection::<RoomData>("rooms"),
             messages: db.collection::<Message>("messages"),
             options: db.collection::<AppOpt>("options"),
-            user_local_data: db.collection::<UserData>("local_data"),
+            user_local_data: db.collection::<User>("local_data"),
         }
     }
 
@@ -30,7 +30,7 @@ impl DbRepo {
             rooms: db.collection::<RoomData>("rooms"),
             messages: db.collection::<Message>("messages"),
             options: db.collection::<AppOpt>("options"),
-            user_local_data: db.collection::<UserData>("local_data"),
+            user_local_data: db.collection::<User>("local_data"),
         }
     }
 }

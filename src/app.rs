@@ -1,10 +1,11 @@
-use crate::schema::{self, Room};
 use crate::db::DbRepo;
 use crate::error::DbError;
+use crate::schema::{AppOption, Color, Room, RoomData, User};
+use crate::util::{create_env_dir, get_passwd, get_unique_id};
 
 use polodb_core::bson::doc;
 use std::env;
-use std::path::Path;
+use std::str::FromStr;
 
 pub enum CommandRequest {
     Version,
@@ -25,10 +26,6 @@ pub enum CommandRequest {
     Invalid,
 }
 
-pub enum AppOption {
-    RememberPassword
-}
-
 pub fn get_command_request() -> CommandRequest {
     let args: Vec<String> = env::args().collect();
     let len = args.len();
@@ -43,63 +40,98 @@ pub fn get_command_request() -> CommandRequest {
         "help" => CommandRequest::Help,
         "create" => match len {
             3 => CommandRequest::Create {
-                room_id: args[2].clone(),
+                room_id: args[2].to_owned(),
                 has_password: true,
             },
             4 if args[2] == "-n" => CommandRequest::Create {
-                room_id: args[3].clone(),
+                room_id: args[3].to_owned(),
                 has_password: false,
             },
             _ => CommandRequest::Invalid,
         },
         "join" => match len {
             3 => CommandRequest::Join {
-                room_address: args[2].clone(),
+                room_address: args[2].to_owned(),
                 username: None,
             },
             4 => CommandRequest::Join {
-                room_address: args[2].clone(),
-                username: Some(args[3].clone()),
+                room_address: args[2].to_owned(),
+                username: Some(args[3].to_owned()),
             },
             _ => CommandRequest::Invalid,
         },
         "list" => CommandRequest::List,
         "del" => match len {
             3 => CommandRequest::Delete {
-                room_id: args[2].clone(),
+                room_id: args[2].to_owned(),
             },
             _ => CommandRequest::Invalid,
         },
+        "set" => match len {
+            3 => CommandRequest::Set(AppOption::from_str(&args[2].to_owned()).unwrap()),
+            _ => CommandRequest::Invalid,
+        },
+
         _ => CommandRequest::Invalid,
     }
 }
 
-pub struct App;
+pub struct App {
+    db: DbRepo,
+    local_usr: User,
+}
 
 impl App {
-    pub fn run(runopt: CommandRequest) {
-        App::init();
+    pub fn init() -> App {
+        let env_dir = create_env_dir("kioto").unwrap();
+        let db = DbRepo::init(&env_dir);
 
-        match runopt {
-            CommandRequest::Version => println!(env!("CARGO_PKG_VERSION")),
-            CommandRequest::Help => Self::print_help(),
-            CommandRequest::Create {
-                room_id,
-                has_password,
-            } => App::create_room(&room_id, has_password),
-            CommandRequest::Join {
-                room_address,
-                username,
-            } => App::join_room(&room_address, &username),
-            CommandRequest::Delete { room_id } => App::delete_room(&room_id),
-            CommandRequest::List => App::list_rooms(),
-            CommandRequest::Set(option) => App::set_app_option(option),
-            CommandRequest::Invalid => println!("Invalid command! Type 'kioto help' for getting help"),
+        if let Some(local_usr) = db.user_local_data.find_one(doc! {}).unwrap() {
+            App {
+                db: db,
+                local_usr: local_usr,
+            }
+        } else {
+            App {
+                db: db,
+                local_usr: User {
+                    address: "placholder".to_owned(),
+                    username: "user".to_owned() + &get_unique_id(),
+                    color: Color(0, 0, 0),
+                },
+            }
         }
     }
 
-    pub fn init() {
-        DbRepo::init(Path::new(""));
+    pub fn run(&self, runopt: CommandRequest) {
+        match runopt {
+            CommandRequest::Version => println!(env!("CARGO_PKG_VERSION")),
+            CommandRequest::Help => App::print_help(),
+            CommandRequest::Create {
+                room_id,
+                has_password,
+            } => {
+                if let Err(DbError::AlreadyExistingId) = self.create_room(&room_id, has_password) {
+                    panic!("Room with this id already exists! Try something new!");
+                }
+            }
+            CommandRequest::Join {
+                room_address,
+                username,
+            } => {
+                if let Some(user) = username {
+                    self.join_room(&room_address, &user)
+                } else {
+                    self.join_room(&room_address, "")
+                }
+            }
+            CommandRequest::Delete { room_id } => self.delete_room(&room_id),
+            CommandRequest::List => self.list_rooms(),
+            CommandRequest::Set(option) => self.set_app_option(option),
+            CommandRequest::Invalid => {
+                println!("Invalid command! Type 'kioto help' for getting help")
+            }
+        }
     }
 
     fn print_help() {
@@ -107,49 +139,45 @@ impl App {
             kioto version - print version of kioto\n
             kioto help - list all commands\n
             kioto create <room_name> - create new room with password\n
-                -n without password\n
+            -n without password\n
             kioto join <room_id> - join room with last use or if was not set with random name and color\n
             kioto join <room_id> <username(color)> - join room with user specified username and color\n
             kioto list - list all rooms that you've already joined\n
             kioto del <room_id> - delete room");
     }
 
-    fn create_room(room_id: &str, password: bool) -> Result<(), DbError> {
+    fn create_room(&self, room_id: &str, password: bool) -> Result<(), DbError> {
         if let Some(_) = self.db.rooms.find_one(doc! {"room_id": room_id}).unwrap() {
             return Err(DbError::AlreadyExistingId);
         }
 
-        let password = get_password();
-            let local_user = get_local_user();
-            let new_room = Room {
-                room_id: room_id.to_owned(),
-                room_address: generate_new_address(),
-                password: password,
-                host: get_local_user(),
-                guests: vec![local_user],
-            };
-            if let Err(err) db[ROOM].insert_one(new_room.prepare_data()) {
-                return err;
-            }
+        let new_room = RoomData {
+            room_id: room_id.to_owned(),
+            room_address: "new_address_placeholder".to_owned(),
+            password: if password { Some(get_passwd()) } else { None },
+            locked_addresses: vec![],
+            are_you_host: true,
+        };
 
-            Ok()
+        self.db.rooms.insert_one(new_room).unwrap();
+
+        Ok(())
     }
 
-    fn delete_room(room_id: &str) {
-match db[ROOM].delete_one(room_id) {
-    
-}
+    fn delete_room(&self, room_id: &str) {
+        self.db.rooms.delete_one(doc! {"room_id": room_id}).unwrap();
     }
 
-    fn list_rooms() {
-        let rooms = db[ROOM].find();
-        rooms.iter().for_each(|room| println!("{}", room.room_id));
-        }
+    fn list_rooms(&self) {
+        let rooms = self.db.rooms.find(None).unwrap();
+        rooms.for_each(|room| println!("{}", room.unwrap().room_id));
+    }
 
-    fn join_room(room_address: &str, guestname: &str) {
-    
-        }
+    fn join_room(&self, room_address: &str, guestname: &str) {
+        todo!()
+    }
 
-        fn set_app_option(option: AppOption) {} 
-
+    fn set_app_option(&self, option: AppOption) {
+        self.db.options.insert_one(option).unwrap();
+    }
 }
