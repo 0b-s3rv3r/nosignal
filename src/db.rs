@@ -1,14 +1,16 @@
 use std::path::Path;
 
 use polodb_core::{Collection, Database};
+use strum::IntoEnumIterator;
 
-use crate::schema::{AppOpt, Message, RoomData, User};
+use crate::schema::{AppOption, Message, RoomData, User};
 
 pub struct DbRepo {
     pub rooms: Collection<RoomData>,
     pub messages: Collection<Message>,
-    pub options: Collection<AppOpt>,
+    pub options: Collection<AppOption>,
     pub user_local_data: Collection<User>,
+    _db: Database,
 }
 
 impl DbRepo {
@@ -18,8 +20,9 @@ impl DbRepo {
         DbRepo {
             rooms: db.collection::<RoomData>("rooms"),
             messages: db.collection::<Message>("messages"),
-            options: db.collection::<AppOpt>("options"),
+            options: db.collection::<AppOption>("options"),
             user_local_data: db.collection::<User>("local_data"),
+            _db: db,
         }
     }
 
@@ -29,8 +32,9 @@ impl DbRepo {
         DbRepo {
             rooms: db.collection::<RoomData>("rooms"),
             messages: db.collection::<Message>("messages"),
-            options: db.collection::<AppOpt>("options"),
+            options: db.collection::<AppOption>("options"),
             user_local_data: db.collection::<User>("local_data"),
+            _db: db,
         }
     }
 }

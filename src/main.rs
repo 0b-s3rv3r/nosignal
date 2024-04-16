@@ -3,6 +3,7 @@ mod db;
 mod error;
 mod network;
 mod schema;
+mod test;
 mod util;
 // mod ui;
 // use ui::ChatUi;

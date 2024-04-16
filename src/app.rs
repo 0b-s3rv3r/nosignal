@@ -1,9 +1,10 @@
 use crate::db::DbRepo;
 use crate::error::DbError;
-use crate::schema::{AppOption, Color, Room, RoomData, User};
+use crate::schema::{AppOpt, AppOption, Color, Room, RoomData, User};
 use crate::util::{create_env_dir, get_passwd, get_unique_id};
+use polodb_core::{bson::doc, Collection};
+use strum::IntoEnumIterator;
 
-use polodb_core::bson::doc;
 use std::env;
 use std::str::FromStr;
 
@@ -22,7 +23,7 @@ pub enum CommandRequest {
         room_id: String,
     },
     List,
-    Set(AppOption),
+    Set(AppOpt),
     Invalid,
 }
 
@@ -68,7 +69,7 @@ pub fn get_command_request() -> CommandRequest {
             _ => CommandRequest::Invalid,
         },
         "set" => match len {
-            3 => CommandRequest::Set(AppOption::from_str(&args[2].to_owned()).unwrap()),
+            3 => CommandRequest::Set(AppOpt::from_str(&args[2].to_owned()).unwrap()),
             _ => CommandRequest::Invalid,
         },
 
@@ -77,16 +78,25 @@ pub fn get_command_request() -> CommandRequest {
 }
 
 pub struct App {
-    db: DbRepo,
+    pub(crate) db: DbRepo,
     local_usr: User,
 }
 
 impl App {
     pub fn init() -> App {
-        let env_dir = create_env_dir("kioto").unwrap();
-        let db = DbRepo::init(&env_dir);
+        let db = DbRepo::init(&create_env_dir("kioto").unwrap());
+        App::db_init(db)
+    }
 
-        if let Some(local_usr) = db.user_local_data.find_one(doc! {}).unwrap() {
+    pub(crate) fn mem_init() -> App {
+        let db = DbRepo::memory_init();
+        App::db_init(db)
+    }
+
+    fn db_init(db: DbRepo) -> App {
+        App::insert_app_options(&db.options);
+
+        if let Some(local_usr) = db.user_local_data.find_one(None).unwrap() {
             App {
                 db: db,
                 local_usr: local_usr,
@@ -101,6 +111,19 @@ impl App {
                 },
             }
         }
+    }
+
+    fn insert_app_options(opt_db: &Collection<AppOption>) {
+        opt_db.insert_many(App::create_app_option_vec()).unwrap();
+    }
+
+    fn create_app_option_vec() -> Vec<AppOption> {
+        AppOpt::iter()
+            .map(|opt| AppOption {
+                option: opt,
+                enabled: false,
+            })
+            .collect()
     }
 
     pub fn run(&self, runopt: CommandRequest) {
@@ -159,7 +182,7 @@ impl App {
             are_you_host: true,
         };
 
-        self.db.rooms.insert_one(new_room).unwrap();
+        self.db.rooms.insert_one(&new_room).unwrap();
 
         Ok(())
     }
@@ -177,7 +200,25 @@ impl App {
         todo!()
     }
 
-    fn set_app_option(&self, option: AppOption) {
-        self.db.options.insert_one(option).unwrap();
+    fn set_app_option(&self, option: AppOpt) {
+        let current_state = self
+            .db
+            .options
+            .find_one(doc! {"option": option.to_string()})
+            .unwrap()
+            .unwrap()
+            .enabled;
+
+        self.db
+            .options
+            .update_one(
+                doc! {"option": option.to_string()},
+                doc! {
+                    "$set": {
+                        "enabled": (!current_state)
+                    }
+                },
+            )
+            .unwrap();
     }
 }

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use strum::EnumString;
+use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
 pub struct Room {
     pub room_id: String,
@@ -10,7 +10,7 @@ pub struct Room {
     pub are_you_host: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq, Clone)]
 pub struct RoomData {
     pub room_id: String,
     pub room_address: String,
@@ -22,11 +22,11 @@ pub struct RoomData {
 impl Room {
     pub fn prepare_data(&self) -> RoomData {
         RoomData {
-            room_id: self.room_id,
-            room_address: self.room_address,
-            password: self.password,
-            locked_addresses: self.locked_addressed,
-            are_you_host: self.are_you_host,
+            room_id: self.room_id.clone(),
+            room_address: self.room_address.clone(),
+            password: self.password.clone(),
+            locked_addresses: self.locked_addressed.clone(),
+            are_you_host: self.are_you_host.clone(),
         }
     }
 }
@@ -49,8 +49,17 @@ pub struct Message {
 #[derive(Serialize, Deserialize)]
 pub struct Color(pub i32, pub i32, pub i32);
 
-#[derive(Serialize, Deserialize, EnumString)]
-pub enum AppOption {
-    RememberPasswords(bool),
-    LightMode(bool),
+#[derive(Serialize, Deserialize, EnumString, EnumIter, Display, PartialEq, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum AppOpt {
+    #[strum(serialize = "remember_passwords")]
+    RememberPasswords,
+    #[strum(serialize = "light_mode")]
+    LightMode,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct AppOption {
+    pub option: AppOpt,
+    pub enabled: bool,
 }

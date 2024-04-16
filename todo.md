@@ -14,4 +14,8 @@ chat keys:
 - ctrl+shift+up/down - page scrolling
 
 chat commands:
-- /kick <username>
+- /block <username>
+
+todo:
+- room ownership transfering
+- network (rsa)
