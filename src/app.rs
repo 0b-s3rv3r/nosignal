@@ -2,6 +2,8 @@ use crate::db::DbRepo;
 use crate::error::DbError;
 use crate::schema::{AppOpt, AppOption, Color, Room, RoomData, User};
 use crate::util::{create_env_dir, get_passwd, get_unique_id};
+
+use clap::{Arg, ArgMatches, Command};
 use polodb_core::{bson::doc, Collection};
 use strum::IntoEnumIterator;
 
@@ -9,8 +11,6 @@ use std::env;
 use std::str::FromStr;
 
 pub enum CommandRequest {
-    Version,
-    Help,
     Create {
         room_id: String,
         has_password: bool,
@@ -28,53 +28,86 @@ pub enum CommandRequest {
 }
 
 pub fn get_command_request() -> CommandRequest {
-    let args: Vec<String> = env::args().collect();
-    let len = args.len();
-
-    if len < 2 {
-        return CommandRequest::Invalid;
-    }
-
-    let command = &args[1];
-    match command.as_str() {
-        "version" => CommandRequest::Version,
-        "help" => CommandRequest::Help,
-        "create" => match len {
-            3 => CommandRequest::Create {
-                room_id: args[2].to_owned(),
-                has_password: true,
-            },
-            4 if args[2] == "-n" => CommandRequest::Create {
-                room_id: args[3].to_owned(),
-                has_password: false,
-            },
-            _ => CommandRequest::Invalid,
-        },
-        "join" => match len {
-            3 => CommandRequest::Join {
-                room_address: args[2].to_owned(),
-                username: None,
-            },
-            4 => CommandRequest::Join {
-                room_address: args[2].to_owned(),
-                username: Some(args[3].to_owned()),
-            },
-            _ => CommandRequest::Invalid,
-        },
-        "list" => CommandRequest::List,
-        "del" => match len {
-            3 => CommandRequest::Delete {
-                room_id: args[2].to_owned(),
-            },
-            _ => CommandRequest::Invalid,
-        },
-        "set" => match len {
-            3 => CommandRequest::Set(AppOpt::from_str(&args[2].to_owned()).unwrap()),
-            _ => CommandRequest::Invalid,
-        },
-
+    match set_clap_app().subcommand() {
+        Some(("create", create_matches)) => {
+            let room_id = create_matches
+                .get_one::<String>("room_id")
+                .unwrap()
+                .to_owned();
+            let has_password = create_matches.args_present();
+            CommandRequest::Create {
+                room_id,
+                has_password,
+            }
+        }
+        Some(("join", join_matches)) => {
+            let room_address = join_matches.get_one::<String>("room_address").unwrap();
+            let username = join_matches.get_one::<String>("username");
+            CommandRequest::Join {
+                room_address: room_address.to_owned(),
+                username: username.cloned(),
+            }
+        }
+        Some(("delete", delete_matches)) => {
+            let room_id = delete_matches
+                .get_one::<String>("room_id")
+                .unwrap()
+                .to_owned();
+            CommandRequest::Delete { room_id }
+        }
+        Some(("list", _)) => CommandRequest::List,
+        Some(("set", set_matches)) => {
+            let option_str = set_matches.get_one::<String>("option").unwrap();
+            let option = AppOpt::from_str(option_str).unwrap();
+            CommandRequest::Set(option)
+        }
         _ => CommandRequest::Invalid,
     }
+}
+
+pub fn set_clap_app() -> ArgMatches {
+    Command::new("kioto")
+        .about("Yet another tui chat.")
+        .version(env!("CARGO_PKG_VERSION"))
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .subcommand(
+            Command::new("create")
+                .long_flag("create")
+                .short_flag('c')
+                .about("Creates a new room")
+                .arg(Arg::new("room_id").required(true))
+                .arg(Arg::new("password").conflicts_with("room_id")),
+        )
+        .subcommand(
+            Command::new("join")
+                .long_flag("join")
+                .short_flag('j')
+                .about("Joins a room")
+                .arg(Arg::new("room_address").required(true))
+                .arg(Arg::new("username")),
+        )
+        .subcommand(
+            Command::new("delete")
+                .long_flag("delete")
+                .short_flag('d')
+                .about("Deletes a room")
+                .arg(Arg::new("room_id").required(true)),
+        )
+        .subcommand(
+            Command::new("list")
+                .about("Lists all rooms")
+                .long_flag("list")
+                .short_flag('l'),
+        )
+        .subcommand(
+            Command::new("set")
+                .long_flag("set")
+                .short_flag('s')
+                .about("Sets an application option")
+                .arg(Arg::new("option").required(true)),
+        )
+        .get_matches()
 }
 
 pub struct App {
@@ -128,8 +161,6 @@ impl App {
 
     pub fn run(&self, runopt: CommandRequest) {
         match runopt {
-            CommandRequest::Version => println!(env!("CARGO_PKG_VERSION")),
-            CommandRequest::Help => App::print_help(),
             CommandRequest::Create {
                 room_id,
                 has_password,

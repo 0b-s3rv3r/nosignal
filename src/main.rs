@@ -11,6 +11,6 @@ mod util;
 use app::{get_command_request, App};
 
 fn main() {
-    App::init().run(get_command_request());
+    App::mem_init().run(get_command_request());
     // ChatUi::init().unwrap().run();
 }

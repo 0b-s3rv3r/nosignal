@@ -9,7 +9,7 @@ mod test {
     };
 
     #[test]
-    fn check_rooms_db() {
+    fn test_create_command() {
         let app = App::mem_init();
         app.run(CommandRequest::Create {
             room_id: "some_room".to_owned(),
@@ -29,7 +29,7 @@ mod test {
     }
 
     #[test]
-    fn check_options_db() {
+    fn test_option_set_command() {
         let option = AppOption {
             option: AppOpt::LightMode,
             enabled: true,
