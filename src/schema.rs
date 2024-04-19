@@ -1,11 +1,13 @@
+use std::net::Ipv4Addr;
+
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
 pub struct Room {
     pub room_id: String,
-    pub room_address: String,
+    pub room_addr: String,
     pub password: Option<String>,
-    pub guests: Vec<User>,
+    pub guests: Vec<Client>,
     pub locked_addressed: Vec<String>,
     pub are_you_host: bool,
 }
@@ -33,7 +35,7 @@ impl Room {
 
 #[derive(Serialize, Deserialize)]
 pub struct User {
-    pub address: String,
+    pub addr: Ipv4Addr,
     pub username: String,
     pub color: Color,
 }
@@ -44,6 +46,7 @@ pub struct Message {
     pub sender_address: String,
     pub chatroom_id: String,
     pub content: String,
+    pub timestamp: std::time::SystemTime,
 }
 
 #[derive(Serialize, Deserialize)]

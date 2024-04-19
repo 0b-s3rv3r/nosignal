@@ -1,16 +1,21 @@
 use crate::db::DbRepo;
-use crate::error::DbError;
+use crate::error::{CommandError, DbError};
 use crate::schema::{AppOpt, AppOption, Color, Room, RoomData, User};
 use crate::util::{create_env_dir, get_passwd, get_unique_id};
 
-use clap::{Arg, ArgMatches, Command};
+use clap::{Arg, ArgAction, ArgMatches, Command};
+use log::error;
 use polodb_core::{bson::doc, Collection};
 use strum::IntoEnumIterator;
 
 use std::env;
+use std::net::Ipv4Addr;
 use std::str::FromStr;
 
 pub enum CommandRequest {
+    Addr {
+        addr: Ipv4Addr,
+    },
     Create {
         room_id: String,
         has_password: bool,
@@ -27,57 +32,76 @@ pub enum CommandRequest {
     Invalid,
 }
 
-pub fn get_command_request() -> CommandRequest {
-    match set_clap_app().subcommand() {
+pub fn get_command_request() -> Result<CommandRequest, CommandError> {
+    match set_clap_commands().subcommand() {
+        Some(("addr", addr_matches)) => {
+            let arg_addr = addr_matches.get_one::<String>("ipv4").unwrap();
+            let addr = Ipv4Addr::from_str(&arg_addr).map_err(|_| CommandError::InvalidIpv4);
+
+            Ok(CommandRequest::Addr { addr: addr })
+        }
         Some(("create", create_matches)) => {
             let room_id = create_matches
                 .get_one::<String>("room_id")
                 .unwrap()
                 .to_owned();
-            let has_password = create_matches.args_present();
-            CommandRequest::Create {
+            let has_password = create_matches.get_flag("password");
+            Ok(CommandRequest::Create {
                 room_id,
                 has_password,
-            }
+            })
         }
         Some(("join", join_matches)) => {
             let room_address = join_matches.get_one::<String>("room_address").unwrap();
             let username = join_matches.get_one::<String>("username");
-            CommandRequest::Join {
+            Ok(CommandRequest::Join {
                 room_address: room_address.to_owned(),
                 username: username.cloned(),
-            }
+            })
         }
         Some(("delete", delete_matches)) => {
             let room_id = delete_matches
                 .get_one::<String>("room_id")
                 .unwrap()
                 .to_owned();
-            CommandRequest::Delete { room_id }
+            Ok(CommandRequest::Delete { room_id })
         }
-        Some(("list", _)) => CommandRequest::List,
+        Some(("list", _)) => Ok(CommandRequest::List),
         Some(("set", set_matches)) => {
             let option_str = set_matches.get_one::<String>("option").unwrap();
             let option = AppOpt::from_str(option_str).unwrap();
-            CommandRequest::Set(option)
+            Ok(CommandRequest::Set(option))
         }
-        _ => CommandRequest::Invalid,
+        _ => Ok(CommandRequest::Invalid),
     }
 }
 
-pub fn set_clap_app() -> ArgMatches {
+pub fn set_clap_commands() -> ArgMatches {
     Command::new("kioto")
         .about("Yet another tui chat.")
         .version(env!("CARGO_PKG_VERSION"))
         .subcommand_required(true)
         .arg_required_else_help(true)
         .subcommand(
+            Command::new("addr")
+                .long_flag("addr")
+                .short_flag("a")
+                .about("Specify custom IPv4")
+                .arg(Arg::new("ipv4").required(true)),
+        )
+        .subcommand(
             Command::new("create")
                 .long_flag("create")
                 .short_flag('c')
                 .about("Creates a new room")
-                .arg(Arg::new("room_id").required(true))
-                .arg(Arg::new("password").conflicts_with("room_id")),
+                .arg(
+                    Arg::new("password")
+                        .long("password")
+                        .short('p')
+                        .num_args(0)
+                        .required(false),
+                )
+                .arg(Arg::new("room_id").required(true)),
         )
         .subcommand(
             Command::new("join")
@@ -127,7 +151,9 @@ impl App {
     }
 
     fn db_init(db: DbRepo) -> App {
-        App::insert_app_options(&db.options);
+        if db.options.count_documents().unwrap() == 0 {
+            App::insert_app_options(&db.options);
+        }
 
         if let Some(local_usr) = db.user_local_data.find_one(None).unwrap() {
             App {
@@ -138,7 +164,7 @@ impl App {
             App {
                 db: db,
                 local_usr: User {
-                    address: "placholder".to_owned(),
+                    addr: "placholder".to_owned(),
                     username: "user".to_owned() + &get_unique_id(),
                     color: Color(0, 0, 0),
                 },
@@ -159,8 +185,15 @@ impl App {
             .collect()
     }
 
-    pub fn run(&self, runopt: CommandRequest) {
+    pub fn run(&mut self, runopt: CommandRequest) {
         match runopt {
+            CommandRequest::Addr { addr } => {
+                self.local_usr.addr = addr;
+                self.db
+                    .user_local_data
+                    .update_one(self.local_usr, ())
+                    .unwrap()
+            }
             CommandRequest::Create {
                 room_id,
                 has_password,
@@ -245,7 +278,7 @@ impl App {
             .update_one(
                 doc! {"option": option.to_string()},
                 doc! {
-                    "$set": {
+                        "$set": {
                         "enabled": (!current_state)
                     }
                 },
