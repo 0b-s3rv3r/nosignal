@@ -4,6 +4,7 @@ pub enum DbError {
 
 pub enum NetError {
     PubAddrFetchFailure,
+    ListenerBindingFailure,
 }
 
 pub enum CommandError {

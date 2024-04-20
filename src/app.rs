@@ -36,7 +36,7 @@ pub fn get_command_request() -> Result<CommandRequest, CommandError> {
     match set_clap_commands().subcommand() {
         Some(("addr", addr_matches)) => {
             let arg_addr = addr_matches.get_one::<String>("ipv4").unwrap();
-            let addr = Ipv4Addr::from_str(&arg_addr).map_err(|_| CommandError::InvalidIpv4);
+            let addr = Ipv4Addr::from_str(&arg_addr).map_err(|_| CommandError::InvalidIpv4)?;
 
             Ok(CommandRequest::Addr { addr: addr })
         }
@@ -85,7 +85,7 @@ pub fn set_clap_commands() -> ArgMatches {
         .subcommand(
             Command::new("addr")
                 .long_flag("addr")
-                .short_flag("a")
+                .short_flag('a')
                 .about("Specify custom IPv4")
                 .arg(Arg::new("ipv4").required(true)),
         )
@@ -164,7 +164,7 @@ impl App {
             App {
                 db: db,
                 local_usr: User {
-                    addr: "placholder".to_owned(),
+                    addr: Ipv4Addr::from_str("placeholder").unwrap(),
                     username: "user".to_owned() + &get_unique_id(),
                     color: Color(0, 0, 0),
                 },
@@ -191,8 +191,11 @@ impl App {
                 self.local_usr.addr = addr;
                 self.db
                     .user_local_data
-                    .update_one(self.local_usr, ())
-                    .unwrap()
+                    .update_one(
+                        doc! {"username": self.local_usr.username },
+                        doc! {"addr": bson::to_bson(&self.local_usr.addr).unwrap() },
+                    )
+                    .unwrap();
             }
             CommandRequest::Create {
                 room_id,

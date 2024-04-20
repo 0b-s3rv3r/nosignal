@@ -1,34 +1,34 @@
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
 pub struct Room {
     pub room_id: String,
-    pub room_addr: String,
+    pub socket_addr: SocketAddr,
     pub password: Option<String>,
-    pub guests: Vec<Client>,
+    pub guests: Vec<User>,
     pub locked_addressed: Vec<String>,
-    pub are_you_host: bool,
+    pub is_owner: bool,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone)]
 pub struct RoomData {
     pub room_id: String,
-    pub room_address: String,
+    pub socket_addr: SocketAddr,
     pub password: Option<String>,
     pub locked_addresses: Vec<String>,
-    pub are_you_host: bool,
+    pub is_owner: bool,
 }
 
 impl Room {
     pub fn prepare_data(&self) -> RoomData {
         RoomData {
             room_id: self.room_id.clone(),
-            room_address: self.room_address.clone(),
+            socket_addr: self.socket_addr.clone(),
             password: self.password.clone(),
             locked_addresses: self.locked_addressed.clone(),
-            are_you_host: self.are_you_host.clone(),
+            is_owner: self.is_owner.clone(),
         }
     }
 }

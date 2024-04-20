@@ -802,6 +802,7 @@ name = "kioto"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "bson",
  "clap",
  "crossterm",
  "dirs",

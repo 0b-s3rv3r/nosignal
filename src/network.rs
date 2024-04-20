@@ -1,4 +1,3 @@
-use std::net::TcpListener;
 use std::{net::Ipv4Addr, str::FromStr};
 
 use futures_util::TryFutureExt;
@@ -6,7 +5,7 @@ use reqwest::dns::Resolve;
 use tokio::net::TcpListener;
 
 use crate::error::NetError;
-use crate::schema::{Client, Message, Room, User};
+use crate::schema::{Message, Room, User};
 
 struct ChatServer {
     listener: TcpListener,
@@ -14,11 +13,11 @@ struct ChatServer {
 }
 
 impl ChatServer {
-    pub fn new(room: &Room) -> Result<Self, NetError> {
-        let listener = TcpListener::bind(&room.room_addr).unwrap();
-
+    pub async fn new(room: Room) -> Result<Self, NetError> {
         Ok(Self {
-            listener: listener,
+            listener: TcpListener::bind(&room.socket_addr)
+                .await
+                .map_err(|_| NetError::ListenerBindingFailure)?,
             current_room: room,
         })
     }
@@ -41,5 +40,5 @@ async fn get_public_addr() -> Result<Ipv4Addr, NetError> {
         .await
         .map_err(|_| NetError::PubAddrFetchFailure)?;
 
-    Ipv4Addr::from_str(&response).map_err(|_| NetError::PubAddrFetchFailure)
+    Ok(Ipv4Addr::from_str(&response).map_err(|_| NetError::PubAddrFetchFailure)?)
 }
