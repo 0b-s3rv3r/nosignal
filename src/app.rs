@@ -1,6 +1,6 @@
 use crate::db::DbRepo;
 use crate::error::{CommandError, DbError};
-use crate::schema::{AppOpt, AppOption, Color, Room, RoomData, User};
+use crate::schema::{AppOpt, AppOption, Color, RoomData, UserData};
 use crate::util::{create_env_dir, get_passwd, get_unique_id};
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
@@ -9,12 +9,12 @@ use polodb_core::{bson::doc, Collection};
 use strum::IntoEnumIterator;
 
 use std::env;
-use std::net::Ipv4Addr;
+use std::net::SocketAddr;
 use std::str::FromStr;
 
 pub enum CommandRequest {
     Addr {
-        addr: Ipv4Addr,
+        addr: SocketAddr,
     },
     Create {
         room_id: String,
@@ -36,7 +36,7 @@ pub fn get_command_request() -> Result<CommandRequest, CommandError> {
     match set_clap_commands().subcommand() {
         Some(("addr", addr_matches)) => {
             let arg_addr = addr_matches.get_one::<String>("ipv4").unwrap();
-            let addr = Ipv4Addr::from_str(&arg_addr).map_err(|_| CommandError::InvalidIpv4)?;
+            let addr = SocketAddr::from_str(&arg_addr).map_err(|_| CommandError::InvalidIpv4)?;
 
             Ok(CommandRequest::Addr { addr: addr })
         }
@@ -136,7 +136,7 @@ pub fn set_clap_commands() -> ArgMatches {
 
 pub struct App {
     pub(crate) db: DbRepo,
-    local_usr: User,
+    local_usr: UserData,
 }
 
 impl App {
@@ -163,10 +163,10 @@ impl App {
         } else {
             App {
                 db: db,
-                local_usr: User {
-                    addr: Ipv4Addr::from_str("placeholder").unwrap(),
-                    username: "user".to_owned() + &get_unique_id(),
+                local_usr: UserData {
+                    user_id: "user".to_owned() + &get_unique_id(),
                     color: Color(0, 0, 0),
+                    addr: SocketAddr::from_str("placeholder").unwrap(),
                 },
             }
         }
@@ -192,7 +192,7 @@ impl App {
                 self.db
                     .user_local_data
                     .update_one(
-                        doc! {"username": self.local_usr.username },
+                        doc! {"username": self.local_usr.user_id },
                         doc! {"addr": bson::to_bson(&self.local_usr.addr).unwrap() },
                     )
                     .unwrap();
@@ -243,10 +243,10 @@ impl App {
 
         let new_room = RoomData {
             room_id: room_id.to_owned(),
-            room_address: "new_address_placeholder".to_owned(),
+            socket_addr: SocketAddr::from_str("new_address_placeholder").unwrap(),
             password: if password { Some(get_passwd()) } else { None },
-            locked_addresses: vec![],
-            are_you_host: true,
+            locked_addrs: vec![],
+            is_owner: true,
         };
 
         self.db.rooms.insert_one(&new_room).unwrap();

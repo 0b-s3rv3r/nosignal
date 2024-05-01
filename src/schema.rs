@@ -1,15 +1,22 @@
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
+use tokio::net::TcpStream;
 
 use serde::{Deserialize, Serialize};
-use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
+use strum::{Display, EnumIter, EnumString};
 
-pub struct Room {
-    pub room_id: String,
-    pub socket_addr: SocketAddr,
-    pub password: Option<String>,
-    pub guests: Vec<User>,
-    pub locked_addressed: Vec<String>,
-    pub is_owner: bool,
+use crate::network::{RoomServer, User};
+
+impl RoomServer {
+    pub async fn serialize(&self) -> RoomData {
+        let self_ = &self.inner.lock().await.data;
+        RoomData {
+            room_id: self_.room_id.clone(),
+            socket_addr: self_.socket_addr,
+            password: self_.password.clone(),
+            locked_addrs: self_.locked_addrs.clone(),
+            is_owner: self_.is_owner,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone)]
@@ -17,33 +24,31 @@ pub struct RoomData {
     pub room_id: String,
     pub socket_addr: SocketAddr,
     pub password: Option<String>,
-    pub locked_addresses: Vec<String>,
+    pub locked_addrs: Vec<SocketAddr>,
     pub is_owner: bool,
 }
 
-impl Room {
-    pub fn prepare_data(&self) -> RoomData {
-        RoomData {
-            room_id: self.room_id.clone(),
-            socket_addr: self.socket_addr.clone(),
-            password: self.password.clone(),
-            locked_addresses: self.locked_addressed.clone(),
-            is_owner: self.is_owner.clone(),
+#[derive(Serialize, Deserialize)]
+pub struct UserData {
+    pub user_id: String,
+    pub addr: SocketAddr,
+    pub color: Color,
+}
+
+impl User {
+    pub fn serialize(&self) -> UserData {
+        UserData {
+            addr: self.addr.peer_addr().unwrap(),
+            user_id: self.user_id.clone(),
+            color: self.color,
         }
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct User {
-    pub addr: Ipv4Addr,
-    pub username: String,
-    pub color: Color,
-}
-
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct Message {
     pub msg_id: u32,
-    pub sender_address: String,
+    pub sender_id: String,
     pub chatroom_id: String,
     pub content: String,
     pub timestamp: std::time::SystemTime,

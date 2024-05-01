@@ -1,12 +1,9 @@
+#[derive(Debug)]
 pub enum DbError {
     AlreadyExistingId,
 }
 
-pub enum NetError {
-    PubAddrFetchFailure,
-    ListenerBindingFailure,
-}
-
+#[derive(Debug)]
 pub enum CommandError {
     InvalidIpv4,
 }
