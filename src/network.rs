@@ -1,17 +1,24 @@
-use futures_util::TryStreamExt;
-use futures_util::{future, FutureExt, StreamExt};
+use futures_util::{future, FutureExt, StreamExt, TryStreamExt};
 use log::debug;
-use std::io;
-use std::net::SocketAddr;
-use std::str::FromStr;
-use std::sync::Arc;
-use tokio::net::TcpListener;
-use tokio::net::TcpStream;
-use tokio::sync::Mutex;
-use tokio_tungstenite::accept_async;
-use tokio_tungstenite::tungstenite::Error as wsError;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::{io, net::SocketAddr, str::FromStr, sync::Arc};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::{broadcast, Mutex};
+use tokio_tungstenite::tungstenite::handshake::server::Request as SRequest;
+use tokio_tungstenite::tungstenite::handshake::server::Response as SResponse;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{accept_async, tungstenite::Error as wsError};
+use tokio_tungstenite::{accept_hdr_async, connect_async};
 
-use crate::schema::{Color, Message, RoomData};
+use crate::schema::{Color, Message, RoomData, UserData};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnRequest {
+    pub user: UserData,
+    pub passwd: Option<String>,
+}
 
 pub struct RoomServer {
     pub listener: TcpListener,
@@ -19,7 +26,7 @@ pub struct RoomServer {
 }
 
 pub struct ServerInner {
-    pub guests: Vec<User>,
+    pub peers: HashMap<SocketAddr, User>,
     pub msgs: Vec<Message>,
     pub data: RoomData,
 }
@@ -29,7 +36,7 @@ impl RoomServer {
         Ok(Self {
             listener: TcpListener::bind(&data.socket_addr).await?,
             inner: Arc::new(Mutex::new(ServerInner {
-                guests: vec![],
+                peers: HashMap::new(),
                 msgs: vec![],
                 data: data,
             })),
@@ -46,16 +53,63 @@ impl RoomServer {
     }
 
     async fn handle_conn(stream: TcpStream, inner: Arc<Mutex<ServerInner>>) -> Result<(), wsError> {
-        debug!("Incoming connection from: {}", stream.peer_addr().unwrap());
-        let ws_stream = accept_async(stream).await?;
+        let inner_data = inner.lock().await;
+
+        let peer_addr = stream.peer_addr()?;
+        debug!("Incoming connection from: {}", peer_addr);
+
+        {
+            if inner_data.data.locked_addrs.contains(&peer_addr) {
+                debug!("Connection has been rejected");
+                return;
+            }
+        }
+
+        let new_user: User;
+        let callback = |req: &SRequest, mut response: SResponse| {
+            let conn_req = serde_json::from_str::<ConnRequest>(req).unwrap();
+
+            if let Some(passwd) = inner_data.data.password {
+                if let Some(req_passwd) = conn_req.passwd {
+                    if passwd != req_passwd {
+                        todo!()
+                    }
+                } else {
+                    todo!()
+                }
+            }
+
+            new_user = User {
+                user_id: conn_req.user.user_id,
+                color: conn_req.user.color,
+                sender: None,
+            };
+
+            Ok(response)
+        };
+
+        let ws_stream = accept_hdr_async(stream, callback).await?;
         debug!("Connection established");
+
+        let (tx, rx) = unbounded_channel();
+        new_user.sender = Some(tx);
+        inner_data.peers.insert(peer_addr, new_user);
 
         let (write, read) = ws_stream.split();
 
-        read.try_filter(|msg| future::ready(msg.is_text() || msg.is_binary()))
-            .forward(write)
-            .await?;
-        debug!("Message forwarded");
+        let broadcast_incoming = read.try_for_each(|msg| {
+            let broadcast_recipients = inner_data
+                .peers
+                .into_iter()
+                .filter(|(addr, _)| addr != &peer_addr)
+                .map(|(_, ws_sink)| ws_sink);
+
+            for recp in broadcast_recipients {
+                recp
+            }
+
+            future::ok(())
+        });
 
         Ok(())
     }
@@ -66,7 +120,6 @@ impl RoomServer {
 }
 
 struct RoomClient {
-    stream: TcpStream,
     guests: Vec<Arc<Mutex<User>>>,
     msgs: Vec<Arc<Mutex<Message>>>,
     data: Arc<Mutex<RoomData>>,
@@ -74,22 +127,32 @@ struct RoomClient {
 
 impl RoomClient {
     pub async fn conn(room: RoomData) -> Result<Self, io::Error> {
+        let (ws_stream, _) = connect_async(&room.socket_addr).await?;
+        let (mut read, mut write) = ws_stream.split();
         Ok(Self {
-            stream: TcpStream::connect(&room.socket_addr).await?,
             guests: vec![],
             msgs: vec![],
             data: Arc::new(Mutex::new(room)),
         })
     }
 
-    pub async fn send_msg(&self, msg: &Message) {}
-    pub async fn receive_msg(&self, msg: &Message) {}
+    pub async fn run(&mut self) {
+        loop {
+            // if let Some(msg)
+        }
+    }
+
+    pub async fn send_msg(&mut self, msg: &Message) {
+        let json_msg = serde_json::to_string(&msg)?;
+    }
+
+    pub async fn receive_msg(&self) {}
 }
 
 pub struct User {
     pub user_id: String,
     pub color: Color,
-    pub addr: TcpStream,
+    pub sender: Option<UnboundedSender<Message>>,
 }
 
 async fn get_public_addr() -> Result<SocketAddr, reqwest::Error> {

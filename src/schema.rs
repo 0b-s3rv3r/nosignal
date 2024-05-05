@@ -28,7 +28,7 @@ pub struct RoomData {
     pub is_owner: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UserData {
     pub user_id: String,
     pub addr: SocketAddr,

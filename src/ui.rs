@@ -6,6 +6,7 @@ use crossterm::{
 };
 
 use ratatui::{layout::*, prelude::*, widgets::block::Position, widgets::*};
+use tui_textarea::TextArea;
 
 use std::{
     collections::{vec_deque, VecDeque},
@@ -23,7 +24,6 @@ use std::{
 pub struct ChatUi {
     term: Terminal<CrosstermBackend<Stdout>>,
     exit: bool,
-    pub input_box: InputBox,
     pub message_window: MessagesWindow,
 }
 
@@ -35,12 +35,13 @@ impl ChatUi {
         Ok(ChatUi {
             term: Terminal::new(CrosstermBackend::new(stdout())).unwrap(),
             exit: false,
-            input_box: InputBox::new(),
             message_window: MessagesWindow::new(),
         })
     }
 
     pub fn run(&mut self) -> io::Result<()> {
+        let mut text_area = TextArea::default();
+
         while !self.exit {
             self.term.draw(|frame| {
                 self.render_frame(frame);
@@ -48,12 +49,12 @@ impl ChatUi {
             self.handle_message_input()?;
         }
 
-        ChatUi::restore()?;
+        ChatUi::deinit()?;
 
         Ok(())
     }
 
-    fn restore() -> io::Result<()> {
+    fn deinit() -> io::Result<()> {
         execute!(stdout(), LeaveAlternateScreen)?;
         disable_raw_mode()?;
         Ok(())
@@ -138,77 +139,6 @@ impl Widget for &MessagesWindow {
             .title(keys)
             .title_position(Position::Bottom)
             .title_alignment(Alignment::Left)
-            .borders(Borders::TOP)
-            .padding(Padding::new(0, 0, 0, 0))
-            .render(area, buf);
-    }
-}
-
-struct InputBox {
-    input: String,
-    cursor_position: usize,
-}
-
-impl InputBox {
-    fn new() -> Self {
-        InputBox {
-            input: String::new(),
-            cursor_position: 0,
-        }
-    }
-
-    fn move_cursor_left(&mut self) {
-        let cursor_moved_left = self.cursor_position.saturating_sub(1);
-        self.cursor_position = self.clamp_cursor(cursor_moved_left);
-    }
-
-    fn move_cursor_right(&mut self) {
-        let cursor_moved_right = self.cursor_position.saturating_add(1);
-        self.cursor_position = self.clamp_cursor(cursor_moved_right);
-    }
-
-    fn enter_char(&mut self, new_char: char) {
-        self.input.insert(self.cursor_position, new_char);
-
-        self.move_cursor_right();
-    }
-
-    fn delete_char(&mut self) {
-        let is_not_cursor_leftmost = self.cursor_position != 0;
-        if is_not_cursor_leftmost {
-            let current_index = self.cursor_position;
-            let from_left_to_current_index = current_index - 1;
-
-            let before_char_to_delete = self.input.chars().take(from_left_to_current_index);
-            let after_char_to_delete = self.input.chars().skip(current_index);
-
-            self.input = before_char_to_delete.chain(after_char_to_delete).collect();
-            self.move_cursor_left();
-        }
-    }
-
-    fn clamp_cursor(&self, new_cursor_pos: usize) -> usize {
-        new_cursor_pos.clamp(0, self.input.len())
-    }
-
-    fn reset_cursor(&mut self) {
-        self.cursor_position = 0;
-    }
-
-    fn submit_message(&mut self) -> String {
-        let msg = self.input.clone();
-        self.input.clear();
-        self.reset_cursor();
-        msg
-    }
-}
-
-impl Widget for &InputBox {
-    fn render(self, area: Rect, buf: &mut Buffer)
-    where
-        Self: Sized,
-    {
-        let window = Block::new()
             .borders(Borders::TOP)
             .padding(Padding::new(0, 0, 0, 0))
             .render(area, buf);

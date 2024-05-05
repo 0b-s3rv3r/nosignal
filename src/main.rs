@@ -4,8 +4,8 @@ mod error;
 mod network;
 mod schema;
 mod test;
+mod ui;
 mod util;
-// mod ui;
 // use ui::ChatUi;
 
 use app::{get_command_request, App};
