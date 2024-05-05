@@ -1,8 +1,9 @@
-use std::net::SocketAddr;
-use tokio::net::TcpStream;
-
+use enum_conversion::prelude::{DeriveTryFrom, EnumConversions};
+use ratatui::style::Color as ratColor;
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use strum::{Display, EnumIter, EnumString};
+use tokio::net::TcpStream;
 
 use crate::network::{RoomServer, User};
 
@@ -49,14 +50,16 @@ impl User {
 pub struct Message {
     pub msg_id: u32,
     pub sender_id: String,
+    pub sender_color: Color,
     pub chatroom_id: String,
     pub content: String,
     pub timestamp: std::time::SystemTime,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct Color(pub i32, pub i32, pub i32);
+#[derive(Serialize, Deserialize, PartialEq, Clone)]
+struct Color(#[serde(remote = "ratColor")] ratColor);
 
+// #[EnumConversions]
 #[derive(Serialize, Deserialize, EnumString, EnumIter, Display, PartialEq, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum AppOpt {
