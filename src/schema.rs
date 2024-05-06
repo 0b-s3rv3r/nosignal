@@ -56,10 +56,51 @@ pub struct Message {
     pub timestamp: std::time::SystemTime,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Clone)]
-struct Color(#[serde(remote = "ratColor")] ratColor);
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
+pub enum Color {
+    Reset,
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    Gray,
+    DarkGray,
+    LightRed,
+    LightGreen,
+    LightYellow,
+    LightBlue,
+    LightMagenta,
+    LightCyan,
+    White,
+}
 
-// #[EnumConversions]
+impl Into<ratColor> for Color {
+    fn into(self) -> ratColor {
+        match self {
+            Color::Reset => ratColor::Reset,
+            Color::Black => ratColor::Black,
+            Color::Red => ratColor::Red,
+            Color::Green => ratColor::Green,
+            Color::Yellow => ratColor::Yellow,
+            Color::Blue => ratColor::Blue,
+            Color::Magenta => ratColor::Magenta,
+            Color::Cyan => ratColor::Cyan,
+            Color::Gray => ratColor::Gray,
+            Color::DarkGray => ratColor::DarkGray,
+            Color::LightRed => ratColor::LightRed,
+            Color::LightGreen => ratColor::LightGreen,
+            Color::LightYellow => ratColor::LightYellow,
+            Color::LightBlue => ratColor::LightBlue,
+            Color::LightMagenta => ratColor::LightMagenta,
+            Color::LightCyan => ratColor::LightCyan,
+            Color::White => ratColor::White,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, EnumString, EnumIter, Display, PartialEq, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum AppOpt {
