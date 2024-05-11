@@ -13,6 +13,8 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 pub enum CommandRequest {
+    Init,
+    Deinit,
     Addr {
         addr: SocketAddr,
     },

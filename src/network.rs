@@ -1,5 +1,6 @@
 use futures_util::{future, FutureExt, StreamExt, TryStreamExt};
 use log::debug;
+use ratatui::style::Style;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{io, net::SocketAddr, str::FromStr, sync::Arc};
@@ -8,11 +9,10 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::{broadcast, Mutex};
 use tokio_tungstenite::tungstenite::handshake::server::Request as SRequest;
 use tokio_tungstenite::tungstenite::handshake::server::Response as SResponse;
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_async, tungstenite::Error as wsError};
 use tokio_tungstenite::{accept_hdr_async, connect_async};
 
-use crate::schema::{Color, Message, RoomData, UserData};
+use crate::schema::{Color, Message, RoomData, RoomStyle, UserData};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConnRequest {
@@ -119,10 +119,11 @@ impl RoomServer {
     }
 }
 
-struct RoomClient {
-    guests: Vec<Arc<Mutex<User>>>,
-    msgs: Vec<Arc<Mutex<Message>>>,
+pub struct RoomClient {
     data: Arc<Mutex<RoomData>>,
+    guests: Arc<Mutex<Vec<User>>>,
+    pub msgs: Arc<Mutex<Vec<Message>>>,
+    pub style: RoomStyle,
 }
 
 impl RoomClient {
@@ -130,9 +131,13 @@ impl RoomClient {
         let (ws_stream, _) = connect_async(&room.socket_addr).await?;
         let (mut read, mut write) = ws_stream.split();
         Ok(Self {
-            guests: vec![],
-            msgs: vec![],
             data: Arc::new(Mutex::new(room)),
+            guests: Arc::new(Mutex::new(vec![])),
+            msgs: Arc::new(Mutex::new(vec![])),
+            style: RoomStyle {
+                bg: room.style.bg,
+                fg: room.style.fg,
+            },
         })
     }
 

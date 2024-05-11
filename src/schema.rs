@@ -21,11 +21,18 @@ impl RoomServer {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone)]
+pub struct RoomStyle {
+    pub fg: Color,
+    pub bg: Color,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Clone)]
 pub struct RoomData {
     pub room_id: String,
     pub socket_addr: SocketAddr,
     pub password: Option<String>,
     pub locked_addrs: Vec<SocketAddr>,
+    pub style: RoomStyle,
     pub is_owner: bool,
 }
 
