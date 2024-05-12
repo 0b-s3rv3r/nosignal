@@ -1,4 +1,4 @@
-# 🎡kioto
-simple tui chat
+# 🎇kioto
 
-Simple, fast, single-executable tui chat.
+Single-executable, compact and minimalistic tui chat.
+
