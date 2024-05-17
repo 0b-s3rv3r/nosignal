@@ -1,5 +1,5 @@
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, read, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -10,19 +10,24 @@ use ratatui::{
     style::Style,
     widgets::{block::Position, *},
 };
+use regex::Regex;
 use std::{
     collections::btree_map::Keys,
     io::{self, Stdout},
+    result,
     str::FromStr,
+    thread::sleep,
     time::{Duration, Instant},
-    usize,
+    usize, vec,
 };
+use tui_popup::Popup;
 use tui_textarea::{CursorMove, Input, Key, TextArea};
 
 #[derive(PartialEq, Eq)]
 enum PopupShow {
     Help,
     List,
+    Banned,
     None,
 }
 
@@ -31,7 +36,7 @@ enum ChatCommand {
     Ban(String),
 }
 
-fn ui() -> io::Result<()> {
+pub fn ui() -> io::Result<()> {
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     enable_raw_mode()?;
@@ -63,10 +68,20 @@ fn ui() -> io::Result<()> {
         ),
     );
 
-    const HELP_CONTENT: &str =
-        "<ctrl-n> highlight next message\n<ctrl-p> highlight previous message";
-    let help_popup =
-        Paragraph::new(HELP_CONTENT).block(Block::new().borders(Borders::ALL).title("help"));
+    let HELP_CONTENT: Text =
+        Text::from("<ctrl-k> highlight next message\n<ctrl-j> highlight previous message");
+    let help_popup = Popup::new("help", HELP_CONTENT).style(
+        Style::new()
+            .bg(Color::from_str(BG).unwrap())
+            .fg(Color::from_str(FG).unwrap()),
+    );
+
+    let mut banned_user = String::new();
+    let banned_popup = Popup::new("", Text::from(banned_user)).style(
+        Style::new()
+            .bg(Color::from_str(BG).unwrap())
+            .fg(Color::from_str(FG).unwrap()),
+    );
 
     let mut msg_height = 0;
     let mut width = 0;
@@ -78,15 +93,52 @@ fn ui() -> io::Result<()> {
                 .direction(Direction::Vertical)
                 .constraints(vec![
                     Constraint::Percentage(90 - msg_height),
-                    Constraint::Percentage(10 + msg_height),
+                    Constraint::Percentage(9 + msg_height),
                 ])
                 .split(frame.size());
+
             width = layout[1].width;
 
-            let formatted_msgs = messages.iter().map(|msg| {
-                Text::from(format!("[{}]: {}", msg.sender, msg.content))
-                    .set_style(Style::default().fg(Color::from_str(MSG_FG).unwrap()))
-            });
+            let formatted_msgs: Vec<Line> = messages
+                .iter()
+                .map(|msg| {
+                    let mut formatted_content = Vec::<Span>::new();
+                    let mut last_index = 0;
+                    let reg = Regex::new(r"@[\w]+(?:\s|$)").unwrap();
+                    for m in reg.find_iter(&msg.content) {
+                        if last_index != m.start() {
+                            formatted_content.push(
+                                Span::from(&msg.content[last_index..m.start()])
+                                    .set_style(Style::new().fg(Color::from_str(MSG_FG).unwrap())),
+                            );
+                        }
+                        formatted_content.push(
+                            Span::from(m.as_str())
+                                .set_style(Style::new().bg(Color::LightYellow).fg(Color::Black)),
+                        );
+                        last_index = m.end();
+                    }
+                    if last_index < msg.content.len() {
+                        formatted_content.push(
+                            Span::from(&msg.content[last_index..])
+                                .fg(Color::from_str(MSG_FG).unwrap()),
+                        );
+                    }
+
+                    let mut line = Line::from(vec![
+                        Span::styled(
+                            msg.sender.clone(),
+                            Style::new().fg(Color::from_str(MSG_FG).unwrap()).bold(),
+                        ),
+                        Span::from(" "),
+                    ]);
+                    formatted_content
+                        .iter()
+                        .for_each(|span| line.push_span(span.clone()));
+
+                    line
+                })
+                .collect();
             let msgs_list = List::new(formatted_msgs)
                 .block(Block::default().title("someroom").borders(Borders::ALL))
                 .style(
@@ -100,22 +152,35 @@ fn ui() -> io::Result<()> {
             frame.render_stateful_widget(msgs_list, layout[0], &mut list_state);
             frame.render_widget(textarea.widget(), layout[1]);
             match popup_state {
-                PopupShow::Help => {
-                    frame.render_widget(&help_popup, centered_rect(60, 25, frame.size()))
-                }
+                PopupShow::Help => frame.render_widget(&help_popup, frame.size()),
                 PopupShow::List => {}
+                PopupShow::Banned => {
+                    frame.render_widget(&banned_popup, frame.size());
+                    sleep(Duration::from_secs(2));
+                    popup_state = PopupShow::None;
+                }
                 PopupShow::None => {}
             }
         })?;
 
         if crossterm::event::poll(Duration::from_millis(50))? {
-            match event::read()?.into() {
+            let key: Input = event::read()?.into();
+            if let Input {
+                key: Key::Char(_) | Key::Enter,
+                ..
+            } = key
+            {
+                if popup_state != PopupShow::None {
+                    popup_state = PopupShow::None;
+                }
+            }
+            match key {
                 Input {
                     key: Key::Char('k'),
                     ctrl: true,
                     ..
                 } => {
-                    previous(&mut list_state);
+                    previous(&mut list_state, messages.len());
                 }
                 Input {
                     key: Key::Char('j'),
@@ -130,38 +195,47 @@ fn ui() -> io::Result<()> {
                     ..
                 } => break,
                 Input {
-                    key: Key::Enter, ..
+                    key: Key::Enter,
+                    ctrl: false,
+                    ..
                 } => {
-                    if popup_state != PopupShow::None {
-                        popup_state = PopupShow::None;
-                    }
-
                     let lines: String = textarea
                         .lines()
                         .iter()
                         .map(|line| {
                             let mut line_ = line.to_string();
-                            line_.push('\n');
+                            if !line_.is_empty() {
+                                line_.push('\n');
+                            }
                             line_
                         })
                         .collect();
-                    if !textarea.is_empty() && {
-                        let temp = no_space(&lines);
-                        !temp.is_empty()
-                    } {
-                        textarea.move_cursor(CursorMove::End);
-                        for _ in 0..textarea.lines().len() {
-                            textarea.delete_line_by_head();
-                            textarea.delete_newline();
-                        }
-                        messages.push(Message {
-                            sender: "me".into(),
-                            content: lines,
-                        });
-                        list_state.select(Some(messages.len()));
-                    }
 
-                    msg_height = 0;
+                    let ban_pattern = Regex::new(r"^/ban\s+(\w+)$").unwrap();
+                    match ban_pattern.captures(&lines) {
+                        Some(captures) => {
+                            if let Some(user_id) = captures.get(0) {
+                                banned_user = user_id.as_str().into();
+                                popup_state = PopupShow::Banned;
+                            }
+                        }
+                        None => {
+                            if !textarea.is_empty() {
+                                for _ in 0..textarea.lines().len() {
+                                    textarea.move_cursor(CursorMove::End);
+                                    textarea.delete_line_by_head();
+                                    textarea.delete_newline();
+                                }
+                                messages.push(Message {
+                                    sender: "me".into(),
+                                    content: lines,
+                                });
+                                list_state.select(Some(messages.len()));
+                            }
+
+                            msg_height = 0;
+                        }
+                    }
                 }
                 Input {
                     key: Key::Char('l'),
@@ -173,10 +247,10 @@ fn ui() -> io::Result<()> {
                     ctrl: true,
                     ..
                 } => {
-                    if popup_state == PopupShow::None {
-                        popup_state = PopupShow::Help
+                    if popup_state != PopupShow::None {
+                        popup_state = PopupShow::None;
                     } else {
-                        popup_state = PopupShow::None
+                        popup_state = PopupShow::Help
                     }
                 }
                 Input {
@@ -191,12 +265,16 @@ fn ui() -> io::Result<()> {
                 } => {
                     let _ = textarea.paste();
                 }
+                Input {
+                    key: Key::Char(' '),
+                    ..
+                } => {
+                    if !textarea.is_empty() {
+                        textarea.insert_char(' ');
+                    }
+                }
                 input => {
                     if textarea.input(input) {
-                        if popup_state != PopupShow::None {
-                            popup_state = PopupShow::None;
-                        }
-
                         if textarea.lines()[textarea.cursor().0].len() == (width - 2).into() {
                             textarea.insert_newline();
                             if msg_height <= MAX_HEIGHT {
@@ -220,53 +298,33 @@ struct Message {
 }
 
 pub fn next(state: &mut ListState, len: usize) {
-    let i = match state.selected() {
-        Some(i) => {
-            if i >= len - 1 {
-                i
-            } else {
-                i + 1
+    if len != 0 {
+        let i = match state.selected() {
+            Some(i) => {
+                if i >= len - 1 {
+                    i
+                } else {
+                    i + 1
+                }
             }
-        }
-        None => 0,
-    };
-    state.select(Some(i));
+            None => 0,
+        };
+        state.select(Some(i));
+    }
 }
 
-pub fn previous(state: &mut ListState) {
-    let i = match state.selected() {
-        Some(i) => {
-            if i == 0 {
-                i
-            } else {
-                i - 1
+pub fn previous(state: &mut ListState, len: usize) {
+    if len != 0 {
+        let i = match state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    i
+                } else {
+                    i - 1
+                }
             }
-        }
-        None => 0,
-    };
-    state.select(Some(i));
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
-}
-
-fn no_space(x: &str) -> String {
-    x.replace(" ", "")
+            None => 0,
+        };
+        state.select(Some(i));
+    }
 }
