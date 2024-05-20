@@ -3,12 +3,15 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::widgets::{Block, Borders, Padding, ScrollbarState};
 use ratatui::{
     layout::*,
     prelude::*,
     style::Style,
     widgets::{block::Position, *},
+};
+use ratatui::{
+    text::Line,
+    widgets::{Block, Borders, Padding, ScrollbarState},
 };
 use regex::Regex;
 use std::{
@@ -68,14 +71,6 @@ pub fn ui() -> io::Result<()> {
         ),
     );
 
-    let HELP_CONTENT: Text =
-        Text::from("<ctrl-k> highlight next message\n<ctrl-j> highlight previous message");
-    let help_popup = Popup::new("help", HELP_CONTENT).style(
-        Style::new()
-            .bg(Color::from_str(BG).unwrap())
-            .fg(Color::from_str(FG).unwrap()),
-    );
-
     let mut banned_user = String::new();
     let banned_popup = Popup::new("", Text::from(banned_user)).style(
         Style::new()
@@ -99,7 +94,7 @@ pub fn ui() -> io::Result<()> {
 
             width = layout[1].width;
 
-            let formatted_msgs: Vec<Line> = messages
+            let formatted_msgs: Vec<Text> = messages
                 .iter()
                 .map(|msg| {
                     let mut formatted_content = Vec::<Span>::new();
@@ -108,19 +103,19 @@ pub fn ui() -> io::Result<()> {
                     for m in reg.find_iter(&msg.content) {
                         if last_index != m.start() {
                             formatted_content.push(
-                                Span::from(&msg.content[last_index..m.start()])
+                                Span::from(format!(" {}", &msg.content[last_index..m.start()]))
                                     .set_style(Style::new().fg(Color::from_str(MSG_FG).unwrap())),
                             );
                         }
                         formatted_content.push(
-                            Span::from(m.as_str())
+                            Span::from(&m.as_str()[0..m.len() - 1])
                                 .set_style(Style::new().bg(Color::LightYellow).fg(Color::Black)),
                         );
                         last_index = m.end();
                     }
                     if last_index < msg.content.len() {
                         formatted_content.push(
-                            Span::from(&msg.content[last_index..])
+                            Span::from(format!(" {}", &msg.content[last_index..]))
                                 .fg(Color::from_str(MSG_FG).unwrap()),
                         );
                     }
@@ -135,19 +130,30 @@ pub fn ui() -> io::Result<()> {
                     formatted_content
                         .iter()
                         .for_each(|span| line.push_span(span.clone()));
-
-                    line
+                    Text::from(line)
                 })
                 .collect();
-            let msgs_list = List::new(formatted_msgs)
-                .block(Block::default().title("someroom").borders(Borders::ALL))
-                .style(
-                    Style::default()
-                        .bg(Color::from_str(BG).unwrap())
-                        .fg(Color::from_str(FG).unwrap()),
-                )
-                .direction(ListDirection::TopToBottom)
-                .highlight_style(Style::default().fg(Color::Yellow));
+            let msgs_list = List::new(
+                messages
+                    .iter()
+                    .map(|msg| Text::from(format!("{} ", msg.content))),
+            )
+            .block(Block::default().title("someroom").borders(Borders::ALL))
+            .style(
+                Style::default()
+                    .bg(Color::from_str(BG).unwrap())
+                    .fg(Color::from_str(FG).unwrap()),
+            )
+            .direction(ListDirection::TopToBottom)
+            .highlight_style(Style::default().fg(Color::Yellow));
+
+            let help_content: Text =
+                Text::from("<ctrl-k> highlight next message\n<ctrl-j> highlight previous message");
+            let help_popup = Popup::new("help", help_content).style(
+                Style::new()
+                    .bg(Color::from_str(BG).unwrap())
+                    .fg(Color::from_str(FG).unwrap()),
+            );
 
             frame.render_stateful_widget(msgs_list, layout[0], &mut list_state);
             frame.render_widget(textarea.widget(), layout[1]);
@@ -214,7 +220,7 @@ pub fn ui() -> io::Result<()> {
                     let ban_pattern = Regex::new(r"^/ban\s+(\w+)$").unwrap();
                     match ban_pattern.captures(&lines) {
                         Some(captures) => {
-                            if let Some(user_id) = captures.get(0) {
+                            if let Some(user_id) = captures.get(1) {
                                 banned_user = user_id.as_str().into();
                                 popup_state = PopupShow::Banned;
                             }
@@ -247,9 +253,9 @@ pub fn ui() -> io::Result<()> {
                     ctrl: true,
                     ..
                 } => {
-                    if popup_state != PopupShow::None {
+                    if popup_state == PopupShow::Help {
                         popup_state = PopupShow::None;
-                    } else {
+                    } else if popup_state == PopupShow::None {
                         popup_state = PopupShow::Help
                     }
                 }

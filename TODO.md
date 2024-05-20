@@ -1,7 +1,6 @@
 - fix hiding help_popup with ctrl+h
 - fix inserting new_line when shift+enter
 - fix parsing commands
-- add highlighting mentions 
 - split whole ui into modules
 - add networking 
 - join all together
