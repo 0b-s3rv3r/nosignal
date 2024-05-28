@@ -1,6 +1,7 @@
-- fix hiding help_popup with ctrl+h
-- fix inserting new_line when shift+enter
-- fix parsing commands
+- fix narrowing textarea block after deleting new line
+- set textarea to fixed value
+- add highlighting mentioning
+- fix inserting lines into message block
 - split whole ui into modules
 - add networking 
 - join all together

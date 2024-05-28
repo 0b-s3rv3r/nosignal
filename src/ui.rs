@@ -1,28 +1,11 @@
 use crossterm::{
-    event::{self, read, Event, KeyCode, KeyEventKind},
-    execute,
+    event, execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{
-    layout::*,
-    prelude::*,
-    style::Style,
-    widgets::{block::Position, *},
-};
-use ratatui::{
-    text::Line,
-    widgets::{Block, Borders, Padding, ScrollbarState},
-};
+use ratatui::{layout::*, prelude::*, style::Style, widgets::*};
 use regex::Regex;
-use std::{
-    collections::btree_map::Keys,
-    io::{self, Stdout},
-    result,
-    str::FromStr,
-    thread::sleep,
-    time::{Duration, Instant},
-    usize, vec,
-};
+use std::{borrow::BorrowMut, io, str::FromStr, time::Duration, usize, vec};
+use tui_pattern_highlighter::{highlight_line, highlight_text};
 use tui_popup::Popup;
 use tui_textarea::{CursorMove, Input, Key, TextArea};
 
@@ -70,17 +53,16 @@ pub fn ui() -> io::Result<()> {
                 .bg(Color::from_str(BG).unwrap()),
         ),
     );
+    _ = textarea.set_search_pattern(r"@\w+");
 
     let mut banned_user = String::new();
-    let banned_popup = Popup::new("", Text::from(banned_user)).style(
-        Style::new()
-            .bg(Color::from_str(BG).unwrap())
-            .fg(Color::from_str(FG).unwrap()),
-    );
+    let mut counter = 100;
 
     let mut msg_height = 0;
     let mut width = 0;
     const MAX_HEIGHT: u16 = 20;
+
+    let mut line_temp = 0;
 
     loop {
         terminal.draw(|frame| {
@@ -94,51 +76,30 @@ pub fn ui() -> io::Result<()> {
 
             width = layout[1].width;
 
-            let formatted_msgs: Vec<Text> = messages
-                .iter()
-                .map(|msg| {
-                    let mut formatted_content = Vec::<Span>::new();
-                    let mut last_index = 0;
-                    let reg = Regex::new(r"@[\w]+(?:\s|$)").unwrap();
-                    for m in reg.find_iter(&msg.content) {
-                        if last_index != m.start() {
-                            formatted_content.push(
-                                Span::from(format!(" {}", &msg.content[last_index..m.start()]))
-                                    .set_style(Style::new().fg(Color::from_str(MSG_FG).unwrap())),
-                            );
-                        }
-                        formatted_content.push(
-                            Span::from(&m.as_str()[0..m.len() - 1])
-                                .set_style(Style::new().bg(Color::LightYellow).fg(Color::Black)),
-                        );
-                        last_index = m.end();
-                    }
-                    if last_index < msg.content.len() {
-                        formatted_content.push(
-                            Span::from(format!(" {}", &msg.content[last_index..]))
-                                .fg(Color::from_str(MSG_FG).unwrap()),
-                        );
-                    }
-
-                    let mut line = Line::from(vec![
-                        Span::styled(
-                            msg.sender.clone(),
-                            Style::new().fg(Color::from_str(MSG_FG).unwrap()).bold(),
-                        ),
-                        Span::from(" "),
-                    ]);
-                    formatted_content
-                        .iter()
-                        .for_each(|span| line.push_span(span.clone()));
-                    Text::from(line)
-                })
-                .collect();
             let msgs_list = List::new(
                 messages
                     .iter()
-                    .map(|msg| Text::from(format!("{} ", msg.content))),
+                    .map(|msg| {
+                        let name = Line::from(msg.sender.clone()).bold();
+                        let content = highlight_text(
+                            &msg.content,
+                            r"@(\w+)",
+                            Style::new().bg(Color::LightBlue),
+                        );
+                        let mut text = Text::from(name);
+                        content
+                            .lines
+                            .iter()
+                            .for_each(|line| text.push_line(line.clone().italic()));
+                        text
+                    })
+                    .collect::<Vec<Text>>(),
             )
-            .block(Block::default().title("someroom").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title(format!("line {} width {}", line_temp, width))
+                    .borders(Borders::ALL),
+            )
             .style(
                 Style::default()
                     .bg(Color::from_str(BG).unwrap())
@@ -155,32 +116,37 @@ pub fn ui() -> io::Result<()> {
                     .fg(Color::from_str(FG).unwrap()),
             );
 
+            let banned_popup = Popup::new(
+                "banned user",
+                Text::from(format!("{} has been removed!", banned_user)),
+            )
+            .style(
+                Style::new()
+                    .bg(Color::from_str(BG).unwrap())
+                    .fg(Color::from_str(FG).unwrap()),
+            );
+
             frame.render_stateful_widget(msgs_list, layout[0], &mut list_state);
             frame.render_widget(textarea.widget(), layout[1]);
+
             match popup_state {
                 PopupShow::Help => frame.render_widget(&help_popup, frame.size()),
                 PopupShow::List => {}
                 PopupShow::Banned => {
-                    frame.render_widget(&banned_popup, frame.size());
-                    sleep(Duration::from_secs(2));
-                    popup_state = PopupShow::None;
+                    counter -= 1;
+                    if counter != 0 {
+                        frame.render_widget(&banned_popup, frame.size());
+                    } else {
+                        popup_state = PopupShow::None;
+                        counter = 70;
+                    }
                 }
                 PopupShow::None => {}
             }
         })?;
 
-        if crossterm::event::poll(Duration::from_millis(50))? {
-            let key: Input = event::read()?.into();
-            if let Input {
-                key: Key::Char(_) | Key::Enter,
-                ..
-            } = key
-            {
-                if popup_state != PopupShow::None {
-                    popup_state = PopupShow::None;
-                }
-            }
-            match key {
+        if crossterm::event::poll(Duration::from_millis(10))? {
+            match event::read()?.into() {
                 Input {
                     key: Key::Char('k'),
                     ctrl: true,
@@ -210,7 +176,7 @@ pub fn ui() -> io::Result<()> {
                         .iter()
                         .map(|line| {
                             let mut line_ = line.to_string();
-                            if !line_.is_empty() {
+                            if !line_.is_empty() && line_ != *textarea.lines().last().unwrap() {
                                 line_.push('\n');
                             }
                             line_
@@ -218,29 +184,27 @@ pub fn ui() -> io::Result<()> {
                         .collect();
 
                     let ban_pattern = Regex::new(r"^/ban\s+(\w+)$").unwrap();
-                    match ban_pattern.captures(&lines) {
-                        Some(captures) => {
-                            if let Some(user_id) = captures.get(1) {
-                                banned_user = user_id.as_str().into();
-                                popup_state = PopupShow::Banned;
-                            }
-                        }
-                        None => {
-                            if !textarea.is_empty() {
-                                for _ in 0..textarea.lines().len() {
-                                    textarea.move_cursor(CursorMove::End);
-                                    textarea.delete_line_by_head();
-                                    textarea.delete_newline();
-                                }
-                                messages.push(Message {
-                                    sender: "me".into(),
-                                    content: lines,
-                                });
-                                list_state.select(Some(messages.len()));
-                            }
+                    if ban_pattern.is_match(&lines.trim()) {
+                        banned_user = lines[5..].to_string();
+                        popup_state = PopupShow::Banned;
+                    }
 
-                            msg_height = 0;
+                    if !textarea.is_empty() {
+                        for _ in 0..textarea.lines().len() {
+                            textarea.move_cursor(CursorMove::End);
+                            textarea.delete_line_by_head();
+                            textarea.delete_newline();
                         }
+                        messages.push(Message {
+                            sender: "me".into(),
+                            content: lines,
+                        });
+                        list_state.select(Some(messages.len()));
+                    }
+
+                    msg_height = 0;
+                    if popup_state == PopupShow::Help {
+                        popup_state = PopupShow::None;
                     }
                 }
                 Input {
@@ -271,21 +235,40 @@ pub fn ui() -> io::Result<()> {
                 } => {
                     let _ = textarea.paste();
                 }
-                Input {
-                    key: Key::Char(' '),
-                    ..
-                } => {
-                    if !textarea.is_empty() {
-                        textarea.insert_char(' ');
-                    }
-                }
+                // Input {
+                //      key: Key::Char(' '),
+                //      ..
+                //  } => {
+                //      if !textarea.is_empty() {
+                //          textarea.insert_char(' ');
+                //      }
+                //  }
                 input => {
                     if textarea.input(input) {
-                        if textarea.lines()[textarea.cursor().0].len() == (width - 2).into() {
-                            textarea.insert_newline();
+                        let ta = textarea.borrow_mut();
+                        let lines = &ta.lines()[ta.cursor().0];
+                        line_temp = lines.len();
+
+                        if lines.len() >= (width - 2).into() {
+                            let rlines: String = lines.chars().rev().collect();
+                            if let Some(caps) = Regex::new(r"\S+").unwrap().captures(&rlines) {
+                                let cap = caps.get(0).unwrap();
+                                if cap.start() == 0 {
+                                    ta.delete_word();
+                                    ta.insert_newline();
+                                    let rword: String = cap.as_str().chars().rev().collect();
+                                    ta.insert_str(&rword);
+                                } else {
+                                    ta.move_cursor(CursorMove::Back);
+                                }
+                            }
+
                             if msg_height <= MAX_HEIGHT {
                                 msg_height += 2;
                             }
+                        }
+                        if popup_state != PopupShow::None {
+                            popup_state = PopupShow::None;
                         }
                     }
                 }
