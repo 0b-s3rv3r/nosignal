@@ -2338,9 +2338,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tui-pattern-highlighter"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1a40faed544693c96d1e350b5d72872ccf77cdfc3d10c441677a1766746bf0a"
+checksum = "f68444bfa2590fe8e2d57b8ebb4ff737a07190e6d51c9c2dd32af0fc7b387cee"
 dependencies = [
  "ratatui",
  "regex",

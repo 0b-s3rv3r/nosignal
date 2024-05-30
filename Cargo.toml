@@ -23,7 +23,7 @@ strum = "0.26.2"
 tokio = "1.36.0"
 tokio-tls = "0.3.1"
 tokio-tungstenite = "0.21.0"
-tui-pattern-highlighter = "0.1.0"
+tui-pattern-highlighter = "0.2.0"
 tui-popup = "0.3.1"
 tui-textarea = { version = "*", features = ["search"] }
 unicode-width = "0.1.12"
