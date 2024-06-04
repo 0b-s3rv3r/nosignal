@@ -7,10 +7,12 @@
 mod ui;
 mod util;
 
-// use app::{get_command_request, App};
-use ui::ui;
+use std::io;
 
-fn main() {
-    // App::mem_init().run(get_command_request().unwrap());
-    ui().unwrap();
+// use app::{get_command_request, App};
+use ui::App;
+
+fn main() -> io::Result<()> {
+    App::new().run()?;
+    Ok(())
 }

@@ -43,7 +43,3 @@ pub fn create_env_dir(dir_name: &str) -> Result<PathBuf, std::io::Error> {
 
     Ok(dir_path)
 }
-
-pub fn no_space(x: &str) -> String {
-    x.replace(" ", "")
-}
