@@ -4,7 +4,7 @@ use crossterm::{
 };
 use ratatui::{layout::*, prelude::*, style::Style, widgets::*};
 use regex::Regex;
-use std::{io, time::Duration, usize};
+use std::{io, time::Duration};
 use tui_pattern_highlighter::highlight_text;
 use tui_popup::Popup;
 use tui_textarea::{CursorMove, Input, Key, TextArea};
@@ -56,7 +56,7 @@ impl<'a> StatefulArea<'a> {
                     }
                 }
 
-                if self.area_height <= Self::MAX_AREA_HEIGHT && line.chars().last() != Some(' ') {
+                if self.area_height <= Self::MAX_AREA_HEIGHT && !line.ends_with(' ') {
                     self.area_height += 1;
                 }
             }
@@ -178,6 +178,7 @@ pub struct App<'a> {
     pub style: WidgetStyle,
     pub messages: StatefulList<Text<'a>>,
     pub msg_area: StatefulArea<'a>,
+    pub commander: Commander,
     pub current_popup: PopupState,
     pub users: Vec<String>,
     pub last_banned_user: String,
@@ -192,11 +193,13 @@ impl<'a> App<'a> {
             Style::new().bg(Color::Black).fg(Color::White),
             Style::new().bg(Color::Black).fg(Color::White),
         );
+
         Self {
             room_id: String::from("someroom"),
             style: style.clone(),
             messages: StatefulList::default(),
             msg_area: StatefulArea::new(style),
+            commander: Commander::default(),
             current_popup: PopupState::None,
             users: vec!["me".to_string()],
             last_banned_user: String::from(""),
@@ -207,6 +210,12 @@ impl<'a> App<'a> {
     }
 
     pub fn run(&mut self) -> io::Result<()> {
+        // let current_popup = Rc::new(RefCell::new(&self.current_popup));
+        // let commands = Commander::with_items(vec![Command::new(r"^/ban (\w+)$", |captures| {
+        // let mut current_popup_ = current_popup.borrow_mut();
+        // current_popup_ = Rc::new(&PopupState::Banned);
+        // })]);
+
         let terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
         let mut tui = Tui::new(terminal);
 
@@ -225,6 +234,24 @@ impl<'a> App<'a> {
     fn handle_input(&mut self) -> io::Result<()> {
         if crossterm::event::poll(Duration::from_millis(10))? {
             match event::read()?.into() {
+                Input { key: Key::Left, .. } => {
+                    self.msg_area.textarea.move_cursor(CursorMove::Back);
+                    Ok(())
+                }
+                Input {
+                    key: Key::Right, ..
+                } => {
+                    self.msg_area.textarea.move_cursor(CursorMove::Forward);
+                    Ok(())
+                }
+                Input { key: Key::Up, .. } => {
+                    self.msg_area.textarea.move_cursor(CursorMove::Up);
+                    Ok(())
+                }
+                Input { key: Key::Down, .. } => {
+                    self.msg_area.textarea.move_cursor(CursorMove::Down);
+                    Ok(())
+                }
                 Input {
                     key: Key::Char('k'),
                     ctrl: true,
@@ -257,7 +284,10 @@ impl<'a> App<'a> {
                     ..
                 } => {
                     if let Some(msg) = self.msg_area.get_msg() {
-                        self.messages.items.push(msg.text);
+                        if !self.commander.execute(&msg.text.to_string()) {
+                            self.messages.items.push(msg.text);
+                        }
+                        self.msg_area.area_height = 0;
                     }
                     Ok(())
                 }
@@ -453,7 +483,7 @@ impl<T> StatefulList<T> {
     }
 
     pub fn previous(&mut self) {
-        if self.items.len() != 0 {
+        if !self.items.is_empty() {
             let i = match self.state.selected() {
                 Some(i) => {
                     if i == 0 {
@@ -469,34 +499,41 @@ impl<T> StatefulList<T> {
     }
 }
 
-// #[derive(Clone)]
-// struct Command<'a> {
-//     pattern: Regex,
-//     event: &'a dyn Fn(&[&str]),
-// }
-//
-// struct Commander<'a> {
-//     commands: Vec<Command<'a>>,
-// }
-//
-// impl<'a> Commander<'a> {
-//     pub fn new(commands: &'a [Command]) -> Self {
-//         Self {
-//             commands: commands.to_vec(),
-//         }
-//     }
-//
-//     pub fn add_cmd(&mut self, command: &'a Command) {
-//         self.commands.push(command.clone());
-//     }
-//
-//     pub fn execute(&mut self, cmd_str: &str) -> bool {
-//         for cmd in self.commands.iter() {
-//             if let Some(cap) = cmd.pattern.captures(&cmd_str) {
-//                 (cmd.event)(&vec![cap.get(0).unwrap().as_str()]);
-//                 return true;
-//             }
-//         }
-//         false
-//     }
-// }
+pub struct Command {
+    pattern: String,
+    event: Box<dyn FnMut(Vec<String>) + 'static>,
+}
+
+impl Command {
+    pub fn new<F>(pattern: &str, func: F) -> Self
+    where
+        F: 'static + FnMut(Vec<String>),
+    {
+        Self {
+            pattern: pattern.into(),
+            event: Box::new(func),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Commander {
+    commands: Vec<Command>,
+}
+
+impl Commander {
+    pub fn with_items(commands: Vec<Command>) -> Self {
+        Self { commands }
+    }
+
+    pub fn execute(&mut self, cmd_str: &str) -> bool {
+        for cmd in self.commands.iter_mut() {
+            let reg = Regex::new(&cmd.pattern).unwrap();
+            if let Some(cap) = reg.captures(cmd_str) {
+                (cmd.event)(vec![cap.get(0).unwrap().as_str().into()]);
+                return true;
+            }
+        }
+        false
+    }
+}
