@@ -4,7 +4,7 @@ use crossterm::{
 };
 use ratatui::{layout::*, prelude::*, style::Style, widgets::*};
 use regex::Regex;
-use std::{io, time::Duration, usize};
+use std::{io, time::Duration};
 use tui_pattern_highlighter::highlight_text;
 use tui_popup::Popup;
 use tui_textarea::{CursorMove, Input, Key, TextArea};
@@ -56,7 +56,7 @@ impl<'a> StatefulArea<'a> {
                     }
                 }
 
-                if self.area_height <= Self::MAX_AREA_HEIGHT && line.chars().last() != Some(' ') {
+                if self.area_height <= Self::MAX_AREA_HEIGHT && !line.ends_with(' ') {
                     self.area_height += 1;
                 }
             }
@@ -233,6 +233,24 @@ impl<'a> App<'a> {
     fn handle_input(&mut self) -> io::Result<()> {
         if crossterm::event::poll(Duration::from_millis(10))? {
             match event::read()?.into() {
+                Input { key: Key::Left, .. } => {
+                    self.msg_area.textarea.move_cursor(CursorMove::Back);
+                    Ok(())
+                }
+                Input {
+                    key: Key::Right, ..
+                } => {
+                    self.msg_area.textarea.move_cursor(CursorMove::Forward);
+                    Ok(())
+                }
+                Input { key: Key::Up, .. } => {
+                    self.msg_area.textarea.move_cursor(CursorMove::Up);
+                    Ok(())
+                }
+                Input { key: Key::Down, .. } => {
+                    self.msg_area.textarea.move_cursor(CursorMove::Down);
+                    Ok(())
+                }
                 Input {
                     key: Key::Char('k'),
                     ctrl: true,
@@ -264,6 +282,7 @@ impl<'a> App<'a> {
                     ctrl: false,
                     ..
                 } => {
+                    self.msg_area.area_height = 0;
                     if let Some(msg) = self.msg_area.get_msg() {
                         if let Some((event, capture)) = (|| {
                             for command in self.commands.iter() {
@@ -483,7 +502,7 @@ impl<T> StatefulList<T> {
     }
 
     pub fn previous(&mut self) {
-        if self.items.len() != 0 {
+        if !self.items.is_empty() {
             let i = match self.state.selected() {
                 Some(i) => {
                     if i == 0 {

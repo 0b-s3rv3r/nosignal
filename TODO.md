@@ -1,8 +1,0 @@
-- fix narrowing textarea block after deleting new line
-- set textarea to fixed value
-- add highlighting mentioning
-- fix inserting lines into message block
-- split whole ui into modules
-- add networking 
-- join all together
-- write tests
