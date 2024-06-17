@@ -183,6 +183,7 @@ pub struct App<'a> {
     pub last_banned_user: String,
     pub popup_display_timer: Timer,
     pub width: u16,
+    pub commands: Vec<(Regex, CommandEvent)>,
     pub running: bool,
 }
 
@@ -192,6 +193,12 @@ impl<'a> App<'a> {
             Style::new().bg(Color::Black).fg(Color::White),
             Style::new().bg(Color::Black).fg(Color::White),
         );
+
+        let commands = vec![(
+            Regex::new(r"/ban\s+(\S+)").unwrap(),
+            CommandEvent::BannedUser,
+        )];
+
         Self {
             room_id: String::from("someroom"),
             style: style.clone(),
@@ -202,6 +209,7 @@ impl<'a> App<'a> {
             last_banned_user: String::from(""),
             popup_display_timer: Timer::new(100),
             width: 0,
+            commands,
             running: true,
         }
     }
@@ -257,7 +265,29 @@ impl<'a> App<'a> {
                     ..
                 } => {
                     if let Some(msg) = self.msg_area.get_msg() {
-                        self.messages.items.push(msg.text);
+                        if let Some((event, capture)) = (|| {
+                            for command in self.commands.iter() {
+                                if let Some(captures) = command.0.captures(&msg.text.to_string()) {
+                                    return Some((
+                                        command.1,
+                                        captures.get(1).unwrap().as_str().to_string(),
+                                    ));
+                                }
+                            }
+                            None
+                        })() {
+                            match event {
+                                CommandEvent::BannedUser => {
+                                    self.last_banned_user = capture;
+                                    self.current_popup = PopupState::Banned;
+                                }
+                                CommandEvent::SetOption => (),
+                            }
+                            return Ok(());
+                        } else {
+                            self.messages.items.push(msg.text);
+                            return Ok(());
+                        }
                     }
                     Ok(())
                 }
@@ -469,34 +499,8 @@ impl<T> StatefulList<T> {
     }
 }
 
-// #[derive(Clone)]
-// struct Command<'a> {
-//     pattern: Regex,
-//     event: &'a dyn Fn(&[&str]),
-// }
-//
-// struct Commander<'a> {
-//     commands: Vec<Command<'a>>,
-// }
-//
-// impl<'a> Commander<'a> {
-//     pub fn new(commands: &'a [Command]) -> Self {
-//         Self {
-//             commands: commands.to_vec(),
-//         }
-//     }
-//
-//     pub fn add_cmd(&mut self, command: &'a Command) {
-//         self.commands.push(command.clone());
-//     }
-//
-//     pub fn execute(&mut self, cmd_str: &str) -> bool {
-//         for cmd in self.commands.iter() {
-//             if let Some(cap) = cmd.pattern.captures(&cmd_str) {
-//                 (cmd.event)(&vec![cap.get(0).unwrap().as_str()]);
-//                 return true;
-//             }
-//         }
-//         false
-//     }
-// }
+#[derive(Clone, Copy)]
+pub enum CommandEvent {
+    BannedUser,
+    SetOption,
+}
