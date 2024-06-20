@@ -13,8 +13,6 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 pub enum CommandRequest {
-    Init,
-    Deinit,
     Addr {
         addr: SocketAddr,
     },
@@ -40,7 +38,7 @@ pub fn get_command_request() -> Result<CommandRequest, CommandError> {
             let arg_addr = addr_matches.get_one::<String>("ipv4").unwrap();
             let addr = SocketAddr::from_str(&arg_addr).map_err(|_| CommandError::InvalidIpv4)?;
 
-            Ok(CommandRequest::Addr { addr: addr })
+            Ok(CommandRequest::Addr { addr })
         }
         Some(("create", create_matches)) => {
             let room_id = create_matches
@@ -158,16 +156,13 @@ impl App {
         }
 
         if let Some(local_usr) = db.user_local_data.find_one(None).unwrap() {
-            App {
-                db: db,
-                local_usr: local_usr,
-            }
+            App { db, local_usr }
         } else {
             App {
-                db: db,
+                db,
                 local_usr: UserData {
                     user_id: "user".to_owned() + &get_unique_id(),
-                    color: Color(0, 0, 0),
+                    color: Color::White,
                     addr: SocketAddr::from_str("placeholder").unwrap(),
                 },
             }
@@ -194,7 +189,7 @@ impl App {
                 self.db
                     .user_local_data
                     .update_one(
-                        doc! {"username": self.local_usr.user_id },
+                        doc! {"username": self.local_usr.user_id.clone() },
                         doc! {"addr": bson::to_bson(&self.local_usr.addr).unwrap() },
                     )
                     .unwrap();
@@ -224,18 +219,6 @@ impl App {
                 println!("Invalid command! Type 'kioto help' for getting help")
             }
         }
-    }
-
-    fn print_help() {
-        println!("Commands:\n
-            kioto version - print version of kioto\n
-            kioto help - list all commands\n
-            kioto create <room_name> - create new room with password\n
-            -n without password\n
-            kioto join <room_id> - join room with last use or if was not set with random name and color\n
-            kioto join <room_id> <username(color)> - join room with user specified username and color\n
-            kioto list - list all rooms that you've already joined\n
-            kioto del <room_id> - delete room");
     }
 
     fn create_room(&self, room_id: &str, password: bool) -> Result<(), DbError> {

@@ -9,169 +9,7 @@ use tui_pattern_highlighter::highlight_text;
 use tui_popup::Popup;
 use tui_textarea::{CursorMove, Input, Key, TextArea};
 
-pub struct StatefulArea<'a> {
-    textarea: TextArea<'a>,
-    area_height: u16,
-}
-
-impl<'a> StatefulArea<'a> {
-    const MAX_AREA_HEIGHT: u16 = 20;
-
-    pub fn new(style: WidgetStyle) -> Self {
-        let mut textarea = TextArea::default();
-        textarea.set_style(style.font_style);
-        textarea.set_cursor_line_style(style.font_style);
-        textarea.set_block(
-            Block::default()
-                .borders(Borders::ALL)
-                .set_style(style.block_style)
-                .padding(Padding::new(2, 2, 1, 1))
-                .border_set(symbols::border::ROUNDED),
-        );
-        _ = textarea.set_search_pattern(r"@\w+");
-        textarea.set_placeholder_text("Type your message here...");
-        textarea.set_placeholder_style(Style::new().fg(Color::Gray));
-
-        Self {
-            textarea,
-            area_height: 0,
-        }
-    }
-
-    pub fn on_input_update(&mut self, input: Input, width: u16) {
-        if self.textarea.input_without_shortcuts(input) {
-            let line = self.textarea.lines()[self.textarea.cursor().0].clone();
-
-            if line.len() >= (width - 6).into() {
-                let rlines: String = line.chars().rev().collect();
-                if let Some(caps) = Regex::new(r"\S+").unwrap().captures(&rlines) {
-                    let cap = caps.get(0).unwrap();
-                    if cap.start() == 0 {
-                        self.textarea.delete_word();
-                        self.textarea.insert_newline();
-                        let rword: String = cap.as_str().chars().rev().collect();
-                        self.textarea.insert_str(&rword);
-                    } else {
-                        self.textarea.delete_char();
-                    }
-                }
-
-                if self.area_height <= Self::MAX_AREA_HEIGHT && !line.ends_with(' ') {
-                    self.area_height += 1;
-                }
-            }
-        }
-    }
-
-    pub fn get_msg(&mut self) -> Option<MessageItem<'a>> {
-        let buffer = self.get_buffer();
-        self.clear_buffer();
-        if let Some(buf) = buffer {
-            return Some(MessageItem::new("me".into(), buf));
-        }
-        None
-    }
-
-    fn get_buffer(&mut self) -> Option<String> {
-        let lines: String = self
-            .textarea
-            .lines()
-            .iter()
-            .map(|line| {
-                let mut line_ = line.to_string();
-                if !line_.is_empty() && line_ != *self.textarea.lines().last().unwrap() {
-                    line_.push('\n');
-                }
-                line_
-            })
-            .collect();
-
-        if lines.trim().is_empty() {
-            return None;
-        }
-        Some(lines)
-    }
-
-    fn clear_buffer(&mut self) {
-        for _ in 0..self.textarea.lines().len() {
-            self.textarea.move_cursor(CursorMove::End);
-            self.textarea.delete_line_by_head();
-            self.textarea.delete_newline();
-        }
-    }
-}
-
-#[derive(PartialEq, Eq)]
-pub enum PopupState {
-    Help,
-    List,
-    Banned,
-    None,
-}
-
-pub struct MessageItem<'a> {
-    pub text: Text<'a>,
-}
-
-impl<'a> MessageItem<'a> {
-    pub fn new(sender_id: String, content: String) -> Self {
-        let name = Line::from(sender_id.clone()).bold();
-        let mut content = highlight_text(content, r"@(\w+)", Style::new().bg(Color::LightBlue));
-        let mut text = Text::from(name);
-        content
-            .lines
-            .iter()
-            .for_each(|line| text.push_line(line.clone().italic()));
-        content.push_line(Line::from("\n"));
-
-        Self { text }
-    }
-}
-
-#[derive(Clone)]
-pub struct WidgetStyle {
-    pub block_style: Style,
-    pub font_style: Style,
-}
-
-impl WidgetStyle {
-    pub fn new(block_style: Style, font_style: Style) -> Self {
-        Self {
-            block_style,
-            font_style,
-        }
-    }
-}
-
-pub struct Timer {
-    treshold_time: usize,
-    counter: usize,
-}
-
-impl Timer {
-    pub fn new(estimated_time: usize) -> Self {
-        Self {
-            treshold_time: estimated_time,
-            counter: 0,
-        }
-    }
-
-    pub fn inc(&mut self) {
-        if self.counter >= self.treshold_time {
-            self.counter = 0;
-        }
-        self.counter += 1;
-    }
-
-    pub fn has_time_passed(&self) -> bool {
-        if self.counter < self.treshold_time {
-            return false;
-        }
-        true
-    }
-}
-
-const HELP_POPUP_CONTENT: &'static str = "";
+const HELP_POPUP_CONTENT: &str = "[ctrl+j] scroll down/n[ctrl+j] scroll up";
 
 pub struct App<'a> {
     pub room_id: String,
@@ -181,9 +19,9 @@ pub struct App<'a> {
     pub current_popup: PopupState,
     pub users: Vec<String>,
     pub last_banned_user: String,
-    pub popup_display_timer: Timer,
     pub width: u16,
     pub commands: Vec<(Regex, CommandEvent)>,
+    pub popup_display_timer: Timer,
     pub running: bool,
 }
 
@@ -207,9 +45,9 @@ impl<'a> App<'a> {
             current_popup: PopupState::None,
             users: vec!["me".to_string()],
             last_banned_user: String::from(""),
-            popup_display_timer: Timer::new(100),
             width: 0,
             commands,
+            popup_display_timer: Timer::new(100),
             running: true,
         }
     }
@@ -224,6 +62,11 @@ impl<'a> App<'a> {
             tui.draw(self)?;
 
             self.handle_input()?;
+
+            self.popup_display_timer.dec();
+            if self.popup_display_timer.has_time_passed() {
+                self.popup_display_timer.lock();
+            }
         }
 
         tui.term_restore()?;
@@ -232,7 +75,16 @@ impl<'a> App<'a> {
 
     fn handle_input(&mut self) -> io::Result<()> {
         if crossterm::event::poll(Duration::from_millis(10))? {
-            match event::read()?.into() {
+            let key = event::read()?;
+            match key {
+                _ => {
+                    if self.current_popup != PopupState::None {
+                        self.current_popup = PopupState::None;
+                    }
+                }
+            }
+
+            match key.into() {
                 Input { key: Key::Left, .. } => {
                     self.msg_area.textarea.move_cursor(CursorMove::Back);
                     Ok(())
@@ -284,28 +136,8 @@ impl<'a> App<'a> {
                 } => {
                     self.msg_area.area_height = 0;
                     if let Some(msg) = self.msg_area.get_msg() {
-                        if let Some((event, capture)) = (|| {
-                            for command in self.commands.iter() {
-                                if let Some(captures) = command.0.captures(&msg.text.to_string()) {
-                                    return Some((
-                                        command.1,
-                                        captures.get(1).unwrap().as_str().to_string(),
-                                    ));
-                                }
-                            }
-                            None
-                        })() {
-                            match event {
-                                CommandEvent::BannedUser => {
-                                    self.last_banned_user = capture;
-                                    self.current_popup = PopupState::Banned;
-                                }
-                                CommandEvent::SetOption => (),
-                            }
-                            return Ok(());
-                        } else {
+                        if !self.handle_commands(&msg.text.to_string()) {
                             self.messages.items.push(msg.text);
-                            return Ok(());
                         }
                     }
                     Ok(())
@@ -366,6 +198,28 @@ impl<'a> App<'a> {
         } else {
             Ok(())
         }
+    }
+
+    fn handle_commands(&mut self, msg: &str) -> bool {
+        if let Some((event, capture)) = (|| {
+            for command in self.commands.iter() {
+                if let Some(captures) = command.0.captures(msg) {
+                    return Some((command.1, captures.get(1).unwrap().as_str().to_string()));
+                }
+            }
+            None
+        })() {
+            match event {
+                CommandEvent::BannedUser => {
+                    self.last_banned_user = capture;
+                    self.current_popup = PopupState::Banned;
+                    self.popup_display_timer.unlock();
+                }
+                CommandEvent::SetOption => (),
+            }
+            return true;
+        }
+        false
     }
 }
 
@@ -459,6 +313,98 @@ impl<B: Backend> Tui<B> {
     }
 }
 
+pub struct StatefulArea<'a> {
+    textarea: TextArea<'a>,
+    area_height: u16,
+}
+
+impl<'a> StatefulArea<'a> {
+    const MAX_AREA_HEIGHT: u16 = 20;
+
+    pub fn new(style: WidgetStyle) -> Self {
+        let mut textarea = TextArea::default();
+        textarea.set_style(style.font_style);
+        textarea.set_cursor_line_style(style.font_style);
+        textarea.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .set_style(style.block_style)
+                .padding(Padding::new(2, 2, 1, 1))
+                .border_set(symbols::border::ROUNDED),
+        );
+        _ = textarea.set_search_pattern(r"@\w+");
+        textarea.set_placeholder_text("Type your message here...");
+        textarea.set_placeholder_style(Style::new().fg(Color::Gray));
+
+        Self {
+            textarea,
+            area_height: 0,
+        }
+    }
+
+    pub fn on_input_update(&mut self, input: Input, width: u16) {
+        if self.textarea.input_without_shortcuts(input) {
+            let line = self.textarea.lines()[self.textarea.cursor().0].clone();
+
+            if line.len() >= (width - 6).into() {
+                let rlines: String = line.chars().rev().collect();
+                if let Some(caps) = Regex::new(r"\S+").unwrap().captures(&rlines) {
+                    let cap = caps.get(0).unwrap();
+                    if cap.start() == 0 {
+                        self.textarea.delete_word();
+                        self.textarea.insert_newline();
+                        let rword: String = cap.as_str().chars().rev().collect();
+                        self.textarea.insert_str(&rword);
+                    } else {
+                        self.textarea.delete_char();
+                    }
+                }
+
+                if self.area_height <= Self::MAX_AREA_HEIGHT && !line.ends_with(' ') {
+                    self.area_height += 1;
+                }
+            }
+        }
+    }
+
+    pub fn get_msg(&mut self) -> Option<MessageItem<'a>> {
+        let buffer = self.get_buffer();
+        self.clear_buffer();
+        if let Some(buf) = buffer {
+            return Some(MessageItem::new("me".into(), buf));
+        }
+        None
+    }
+
+    fn get_buffer(&mut self) -> Option<String> {
+        let lines: String = self
+            .textarea
+            .lines()
+            .iter()
+            .map(|line| {
+                let mut line_ = line.to_string();
+                if !line_.is_empty() && line_ != *self.textarea.lines().last().unwrap() {
+                    line_.push('\n');
+                }
+                line_
+            })
+            .collect();
+
+        if lines.trim().is_empty() {
+            return None;
+        }
+        Some(lines)
+    }
+
+    fn clear_buffer(&mut self) {
+        for _ in 0..self.textarea.lines().len() {
+            self.textarea.move_cursor(CursorMove::End);
+            self.textarea.delete_line_by_head();
+            self.textarea.delete_newline();
+        }
+    }
+}
+
 pub struct StatefulList<T> {
     pub state: ListState,
     pub items: Vec<T>,
@@ -516,6 +462,89 @@ impl<T> StatefulList<T> {
             self.state.select(Some(i));
         }
     }
+}
+
+pub struct MessageItem<'a> {
+    pub text: Text<'a>,
+}
+
+impl<'a> MessageItem<'a> {
+    pub fn new(sender_id: String, content: String) -> Self {
+        let name = Line::from(sender_id.clone()).bold();
+        let mut content = highlight_text(content, r"@(\w+)", Style::new().bg(Color::LightBlue));
+        let mut text = Text::from(name);
+        content
+            .lines
+            .iter()
+            .for_each(|line| text.push_line(line.clone().italic()));
+        content.push_line(Line::from("\n"));
+
+        Self { text }
+    }
+}
+
+pub struct Timer {
+    treshold_time: usize,
+    counter: usize,
+    start: bool,
+}
+
+impl Timer {
+    pub fn new(treshold_time: usize) -> Self {
+        Self {
+            treshold_time,
+            counter: 0,
+            start: false,
+        }
+    }
+
+    pub fn unlock(&mut self) {
+        self.start = true;
+    }
+
+    pub fn lock(&mut self) {
+        self.start = false;
+    }
+
+    pub fn dec(&mut self) {
+        if self.start {
+            if self.counter <= 0 {
+                self.counter = self.treshold_time;
+            }
+
+            self.counter -= 1;
+        }
+    }
+
+    pub fn has_time_passed(&self) -> bool {
+        if self.counter > 0 {
+            return false;
+        }
+        true
+    }
+}
+
+#[derive(Clone)]
+pub struct WidgetStyle {
+    pub block_style: Style,
+    pub font_style: Style,
+}
+
+impl WidgetStyle {
+    pub fn new(block_style: Style, font_style: Style) -> Self {
+        Self {
+            block_style,
+            font_style,
+        }
+    }
+}
+
+#[derive(PartialEq, Eq)]
+pub enum PopupState {
+    Help,
+    List,
+    Banned,
+    None,
 }
 
 #[derive(Clone, Copy)]

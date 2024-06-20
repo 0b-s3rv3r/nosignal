@@ -3,8 +3,6 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use argon2::{password_hash::Salt, Argon2, PasswordHasher};
-use dirs;
-use rpassword;
 use uuid::Uuid;
 
 pub fn get_unique_id() -> String {

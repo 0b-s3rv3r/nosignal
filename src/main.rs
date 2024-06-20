@@ -5,11 +5,10 @@
 // mod schema;
 // mod test;
 mod ui;
-mod util;
+// mod util;
 
 use std::io;
 
-// use app::{get_command_request, App};
 use ui::App;
 
 fn main() -> io::Result<()> {
