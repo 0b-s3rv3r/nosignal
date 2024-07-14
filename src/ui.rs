@@ -1,13 +1,20 @@
 use crossterm::{
-    event, execute,
+    event::{self, Event, EventStream, KeyCode, KeyModifiers},
+    execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use futures::{future::FutureExt, select, StreamExt};
+use futures_timer::Delay;
 use ratatui::{layout::*, prelude::*, style::Style, widgets::*};
 use regex::Regex;
-use std::{io, time::Duration};
+use std::io;
+use tokio::time::Duration;
+use tokio_tungstenite::tungstenite::Message;
 use tui_pattern_highlighter::highlight_text;
 use tui_popup::Popup;
-use tui_textarea::{CursorMove, Input, Key, TextArea};
+use tui_textarea::{CursorMove, Input, TextArea};
+
+use crate::network::Client;
 
 const HELP_POPUP_CONTENT: &str = "[ctrl+j] scroll down/n[ctrl+j] scroll up";
 
@@ -23,10 +30,12 @@ pub struct App<'a> {
     pub commands: Vec<(Regex, CommandEvent)>,
     pub popup_display_timer: Timer,
     pub running: bool,
+    pub client: Client,
+    pub reader: EventStream,
 }
 
 impl<'a> App<'a> {
-    pub fn new() -> Self {
+    pub fn new(client: Client) -> Self {
         let style = WidgetStyle::new(
             Style::new().bg(Color::Black).fg(Color::White),
             Style::new().bg(Color::Black).fg(Color::White),
@@ -49,10 +58,12 @@ impl<'a> App<'a> {
             commands,
             popup_display_timer: Timer::new(100),
             running: true,
+            client,
+            reader: EventStream::new(),
         }
     }
 
-    pub fn run(&mut self) -> io::Result<()> {
+    pub async fn run(&mut self) -> io::Result<()> {
         let terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
         let mut tui = Tui::new(terminal);
 
@@ -61,11 +72,16 @@ impl<'a> App<'a> {
         while self.running {
             tui.draw(self)?;
 
-            self.handle_input()?;
+            self.handle_input().await?;
 
             self.popup_display_timer.dec();
             if self.popup_display_timer.has_time_passed() {
                 self.popup_display_timer.lock();
+            }
+
+            if let Some(msg) = self.client.receive().await {
+                let message = MessageItem::new("someone".into(), msg.to_string());
+                self.messages.items.push(message.text);
             }
         }
 
@@ -73,131 +89,83 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    fn handle_input(&mut self) -> io::Result<()> {
-        if crossterm::event::poll(Duration::from_millis(10))? {
-            let key = event::read()?;
-            match key {
-                _ => {
-                    if self.current_popup != PopupState::None {
-                        self.current_popup = PopupState::None;
-                    }
-                }
-            }
+    async fn handle_input(&mut self) -> io::Result<()> {
+        let mut delay = Delay::new(Duration::from_millis(1_000)).fuse();
+        let mut event = self.reader.next().fuse();
 
-            match key.into() {
-                Input { key: Key::Left, .. } => {
-                    self.msg_area.textarea.move_cursor(CursorMove::Back);
-                    Ok(())
-                }
-                Input {
-                    key: Key::Right, ..
-                } => {
-                    self.msg_area.textarea.move_cursor(CursorMove::Forward);
-                    Ok(())
-                }
-                Input { key: Key::Up, .. } => {
-                    self.msg_area.textarea.move_cursor(CursorMove::Up);
-                    Ok(())
-                }
-                Input { key: Key::Down, .. } => {
-                    self.msg_area.textarea.move_cursor(CursorMove::Down);
-                    Ok(())
-                }
-                Input {
-                    key: Key::Char('k'),
-                    ctrl: true,
-                    ..
-                } => {
-                    self.messages.is_highlighted = true;
-                    self.messages.previous();
-                    Ok(())
-                }
-                Input {
-                    key: Key::Char('j'),
-                    ctrl: true,
-                    ..
-                } => {
-                    self.messages.is_highlighted = true;
-                    self.messages.next();
-                    Ok(())
-                }
-                Input {
-                    key: Key::Char('q'),
-                    ctrl: true,
-                    ..
-                } => {
-                    self.running = false;
-                    Ok(())
-                }
-                Input {
-                    key: Key::Enter,
-                    ctrl: false,
-                    ..
-                } => {
-                    self.msg_area.area_height = 0;
-                    if let Some(msg) = self.msg_area.get_msg() {
-                        if !self.handle_commands(&msg.text.to_string()) {
-                            self.messages.items.push(msg.text);
-                        }
+        select! {
+            maybe_event = event => {
+                match maybe_event {
+                    Some(Ok(event)) => {
+                        if let Event::Key(key_event) = event {
+        match key_event.code {
+            KeyCode::Left => {
+                self.msg_area.textarea.move_cursor(CursorMove::Back);
+            }
+            KeyCode::Right => {
+                self.msg_area.textarea.move_cursor(CursorMove::Forward);
+            }
+            KeyCode::Up => {
+                self.msg_area.textarea.move_cursor(CursorMove::Up);
+            }
+            KeyCode::Down => {
+                self.msg_area.textarea.move_cursor(CursorMove::Down);
+            }
+            KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.messages.is_highlighted = true;
+                self.messages.previous();
+            }
+            KeyCode::Char('j') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.messages.is_highlighted = true;
+                self.messages.next();
+            }
+            KeyCode::Char('q') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.running = false;
+            }
+            KeyCode::Enter => {
+                self.msg_area.area_height = 0;
+                if let Some(msg) = self.msg_area.get_msg() {
+                    if !self.handle_commands(&msg.text.to_string()) {
+                        self.messages.items.push(msg.text.clone());
+                        let message = msg.text.to_string();
+                        self.client.send(Message::Text(message)).await.unwrap();
                     }
-                    Ok(())
-                }
-                Input {
-                    key: Key::Char('l'),
-                    ctrl: true,
-                    ..
-                } => {
-                    self.current_popup = PopupState::List;
-                    Ok(())
-                }
-                Input {
-                    key: Key::Char('h'),
-                    ctrl: true,
-                    ..
-                } => {
-                    self.current_popup = PopupState::Help;
-                    Ok(())
-                }
-                Input {
-                    key: Key::Char('y'),
-                    ctrl: true,
-                    ..
-                } => {
-                    self.msg_area.textarea.copy();
-                    Ok(())
-                }
-                Input {
-                    key: Key::Char('p'),
-                    ctrl: true,
-                    ..
-                } => {
-                    _ = self.msg_area.textarea.paste();
-                    Ok(())
-                }
-                Input {
-                    key: Key::Backspace,
-                    ..
-                } => {
-                    if self.msg_area.textarea.cursor().1 == 0
-                        && self.msg_area.textarea.cursor().0 > 0
-                    {
-                        self.msg_area.textarea.delete_newline();
-                        self.msg_area.area_height -= 1;
-                    } else {
-                        self.msg_area.textarea.delete_char();
-                    }
-                    Ok(())
-                }
-                input => {
-                    self.messages.is_highlighted = false;
-                    self.messages.state.select(Some(self.messages.items.len()));
-                    self.msg_area.on_input_update(input, self.width);
-                    Ok(())
                 }
             }
-        } else {
-            Ok(())
+            KeyCode::Char('l') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.current_popup = PopupState::List;
+            }
+            KeyCode::Char('h') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.current_popup = PopupState::Help;
+            }
+            KeyCode::Char('y') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.msg_area.textarea.copy();
+            }
+            KeyCode::Char('p') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                _ = self.msg_area.textarea.paste();
+            }
+            KeyCode::Backspace => {
+                if self.msg_area.textarea.cursor().1 == 0 && self.msg_area.textarea.cursor().0 > 0 {
+                    self.msg_area.textarea.delete_newline();
+                    self.msg_area.area_height -= 1;
+                } else {
+                    self.msg_area.textarea.delete_char();
+                }
+            }
+            _ => {
+                self.messages.is_highlighted = false;
+                self.messages.state.select(Some(self.messages.items.len()));
+                self.msg_area.on_input_update(key_event.into(), self.width);
+            }
         }
+                        }
+                    },
+                    Some(Err(e)) => return Err(e),
+                    None => self.running = false,
+                }
+            }
+        }
+        Ok(())
     }
 
     fn handle_commands(&mut self, msg: &str) -> bool {

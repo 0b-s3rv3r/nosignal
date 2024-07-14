@@ -1,167 +1,162 @@
-use futures_util::{future, FutureExt, StreamExt, TryStreamExt};
+use futures_channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
+use futures_util::{future, pin_mut, stream::TryStreamExt, SinkExt, StreamExt};
 use log::debug;
-use ratatui::style::Style;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::{io, net::SocketAddr, str::FromStr, sync::Arc};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use tokio::sync::{broadcast, Mutex};
-use tokio_tungstenite::tungstenite::handshake::server::Request as SRequest;
-use tokio_tungstenite::tungstenite::handshake::server::Response as SResponse;
-use tokio_tungstenite::{accept_async, tungstenite::Error as wsError};
-use tokio_tungstenite::{accept_hdr_async, connect_async};
+use std::{
+    collections::HashMap,
+    env,
+    io::{self},
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::task;
+use tokio::{
+    io::AsyncReadExt,
+    net::{TcpListener, TcpStream},
+};
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::error::Error;
+use tokio_tungstenite::tungstenite::protocol::Message;
 
-use crate::schema::{Color, Message, RoomData, RoomStyle, UserData};
+type Tx = UnboundedSender<Message>;
+type Rx = UnboundedReceiver<Message>;
+type PeerMap = Arc<Mutex<HashMap<SocketAddr, Tx>>>;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ConnRequest {
-    pub user: UserData,
-    pub passwd: Option<String>,
+pub struct ChatServer {
+    peer_map: PeerMap,
+    listener: TcpListener,
 }
 
-pub struct RoomServer {
-    pub listener: TcpListener,
-    pub inner: Arc<Mutex<ServerInner>>,
-}
+impl ChatServer {
+    pub async fn new(addr: &str) -> io::Result<Self> {
+        let listener = TcpListener::bind(addr).await?;
+        debug!("Listening on {addr}");
 
-pub struct ServerInner {
-    pub peers: HashMap<SocketAddr, User>,
-    pub msgs: Vec<Message>,
-    pub data: RoomData,
-}
-
-impl RoomServer {
-    pub async fn init(data: RoomData) -> Result<Self, io::Error> {
         Ok(Self {
-            listener: TcpListener::bind(&data.socket_addr).await?,
-            inner: Arc::new(Mutex::new(ServerInner {
-                peers: HashMap::new(),
-                msgs: vec![],
-                data: data,
-            })),
+            peer_map: PeerMap::new(Mutex::new(HashMap::new())),
+            listener,
         })
     }
 
-    pub async fn run(&self) -> Result<(), io::Error> {
-        loop {
-            if let Ok((stream, _)) = self.listener.accept().await {
-                let server_inner = self.inner.clone();
-                tokio::spawn(async move { RoomServer::handle_conn(stream, server_inner) });
-            }
+    pub async fn run(&self) -> io::Result<()> {
+        while let Ok((stream, addr)) = self.listener.accept().await {
+            tokio::spawn(ChatServer::handle_conection(
+                self.peer_map.clone(),
+                stream,
+                addr,
+            ));
         }
+
+        Ok(())
     }
 
-    async fn handle_conn(stream: TcpStream, inner: Arc<Mutex<ServerInner>>) -> Result<(), wsError> {
-        let inner_data = inner.lock().await;
+    async fn handle_conection(peer_map: PeerMap, raw_stream: TcpStream, addr: SocketAddr) {
+        let ws_stream = tokio_tungstenite::accept_async(raw_stream).await.unwrap();
+        debug!("Connection established with {addr}");
 
-        let peer_addr = stream.peer_addr()?;
-        debug!("Incoming connection from: {}", peer_addr);
+        let (tx, rx) = unbounded();
+        peer_map.lock().unwrap().insert(addr, tx);
 
-        {
-            if inner_data.data.locked_addrs.contains(&peer_addr) {
-                debug!("Connection has been rejected");
-                return;
-            }
-        }
+        let (outgoing, incoming) = ws_stream.split();
 
-        let new_user: User;
-        let callback = |req: &SRequest, mut response: SResponse| {
-            let conn_req = serde_json::from_str::<ConnRequest>(req).unwrap();
+        let broadcast_incoming = incoming.try_for_each(|msg| {
+            debug!("{} from {}", msg.to_text().unwrap(), addr);
 
-            if let Some(passwd) = inner_data.data.password {
-                if let Some(req_passwd) = conn_req.passwd {
-                    if passwd != req_passwd {
-                        todo!()
-                    }
-                } else {
-                    todo!()
-                }
-            }
-
-            new_user = User {
-                user_id: conn_req.user.user_id,
-                color: conn_req.user.color,
-                sender: None,
-            };
-
-            Ok(response)
-        };
-
-        let ws_stream = accept_hdr_async(stream, callback).await?;
-        debug!("Connection established");
-
-        let (tx, rx) = unbounded_channel();
-        new_user.sender = Some(tx);
-        inner_data.peers.insert(peer_addr, new_user);
-
-        let (write, read) = ws_stream.split();
-
-        let broadcast_incoming = read.try_for_each(|msg| {
-            let broadcast_recipients = inner_data
-                .peers
-                .into_iter()
-                .filter(|(addr, _)| addr != &peer_addr)
+            let peers = peer_map.lock().unwrap();
+            let broadcast_recipients = peers
+                .iter()
+                .filter(|(peer_addr, _)| peer_addr != &&addr)
                 .map(|(_, ws_sink)| ws_sink);
 
             for recp in broadcast_recipients {
-                recp
+                recp.unbounded_send(msg.clone()).unwrap();
+                debug!("{msg}");
             }
 
             future::ok(())
         });
 
-        Ok(())
-    }
+        let receive_from_others = rx.map(Ok).forward(outgoing);
 
-    pub async fn block_addr(&mut self, addr: SocketAddr) {
-        self.inner.lock().await.data.locked_addrs.push(addr);
+        pin_mut!(broadcast_incoming, receive_from_others);
+        future::select(broadcast_incoming, receive_from_others).await;
+
+        peer_map.lock().unwrap().remove(&addr);
+
+        debug!("{} disconnected", &addr);
     }
 }
 
-pub struct RoomClient {
-    data: Arc<Mutex<RoomData>>,
-    guests: Arc<Mutex<Vec<User>>>,
-    pub msgs: Arc<Mutex<Vec<Message>>>,
-    pub style: RoomStyle,
+pub struct Client {
+    sender: Sender<Message>,
+    receiver: Receiver<Message>,
 }
 
-impl RoomClient {
-    pub async fn conn(room: RoomData) -> Result<Self, io::Error> {
-        let (ws_stream, _) = connect_async(&room.socket_addr).await?;
-        let (mut read, mut write) = ws_stream.split();
-        Ok(Self {
-            data: Arc::new(Mutex::new(room)),
-            guests: Arc::new(Mutex::new(vec![])),
-            msgs: Arc::new(Mutex::new(vec![])),
-            style: RoomStyle {
-                bg: room.style.bg,
-                fg: room.style.fg,
-            },
+impl Client {
+    pub async fn connect(url: &str) -> Result<Self, Error> {
+        let (ws_stream, _) = connect_async(url).await?;
+        let (write, read) = ws_stream.split();
+
+        let (tx, mut rx) = mpsc::channel::<Message>(100);
+        let (tx_in, rx_in) = mpsc::channel::<Message>(100);
+
+        // Task for reading from WebSocket and sending to receiver channel
+        task::spawn(async move {
+            let mut read = read;
+            while let Some(msg) = read.next().await {
+                match msg {
+                    Ok(msg) => {
+                        if tx_in.send(msg).await.is_err() {
+                            eprintln!("Receiver dropped");
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading message: {}", e);
+                        return;
+                    }
+                }
+            }
+        });
+
+        // Task for sending messages from the sender channel to WebSocket
+        task::spawn(async move {
+            let mut write = write;
+            while let Some(msg) = rx.recv().await {
+                if let Err(e) = write.send(msg).await {
+                    eprintln!("Error sending message: {}", e);
+                    return;
+                }
+            }
+        });
+
+        Ok(Client {
+            sender: tx,
+            receiver: rx_in,
         })
     }
 
-    pub async fn run(&mut self) {
-        loop {
-            // if let Some(msg)
+    pub async fn send(&self, msg: Message) -> Result<(), mpsc::error::SendError<Message>> {
+        self.sender.send(msg).await
+    }
+
+    pub async fn receive(&mut self) -> Option<Message> {
+        if self.receiver.is_empty() {
+            return None;
         }
+        self.receiver.recv().await
     }
-
-    pub async fn send_msg(&mut self, msg: &Message) {
-        let json_msg = serde_json::to_string(&msg)?;
-    }
-
-    pub async fn receive_msg(&self) {}
 }
 
-pub struct User {
-    pub user_id: String,
-    pub color: Color,
-    pub sender: Option<UnboundedSender<Message>>,
-}
-
-async fn get_public_addr() -> Result<SocketAddr, reqwest::Error> {
-    let response = reqwest::get("https://api.ipify.org").await?.text().await?;
-
-    Ok(SocketAddr::from_str(&response).unwrap())
-}
+// pub struct User {
+//     pub user_id: String,
+//     pub color: Color,
+//     pub sender: Option<UnboundedSender<Message>>,
+// }
+//
+// async fn get_public_addr() -> Result<SocketAddr, reqwest::Error> {
+//     let response = reqwest::get("https://api.ipify.org").await?.text().await?;
+//
+//     Ok(SocketAddr::from_str(&response).unwrap())
+// }
