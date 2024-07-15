@@ -1,19 +1,17 @@
 // mod app;
 // mod db;
 // mod error;
-mod network;
 // mod schema;
 // mod test;
-mod ui;
+mod tui;
 // mod util;
+mod network;
 
-use std::io;
+use network::client::ChatClient;
+use network::server::ChatServer;
+use tui::chat_app::ChatApp;
 
-use network::{ChatServer, Client};
-use ui::App;
-
-use std::env;
-use tokio;
+use std::{env, io};
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -22,19 +20,23 @@ async fn main() -> io::Result<()> {
         "server" => {
             println!("Starting server...");
             tokio::spawn(async move {
-                let server = ChatServer::new("127.0.0.1:12345").await.unwrap();
+                let server = ChatServer::new("192.168.0.157:12345").await.unwrap();
                 server.run().await.unwrap();
             });
 
-            let client = Client::connect("ws://127.0.0.1:12345/").await.unwrap();
+            let client = ChatClient::connect("ws://192.168.0.157:12345/")
+                .await
+                .unwrap();
 
-            let mut app = App::new(client);
+            let mut app = ChatApp::new(client);
             app.run().await?;
         }
         "client" => {
-            let client = Client::connect("ws://127.0.0.1:12345/").await.unwrap();
+            let client = ChatClient::connect("ws://192.168.0.157:12345/")
+                .await
+                .unwrap();
 
-            let mut app = App::new(client);
+            let mut app = ChatApp::new(client);
             app.run().await?;
         }
         _ => {}

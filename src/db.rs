@@ -20,7 +20,7 @@ impl DbRepo {
             rooms: db.collection::<RoomData>("rooms"),
             messages: db.collection::<Message>("messages"),
             options: db.collection::<AppOption>("options"),
-            user_local_data: db.collection::<UserData>("local_data"),
+            local_data: db.collection::<UserData>("local_data"),
             _db: db,
         }
     }
@@ -32,7 +32,7 @@ impl DbRepo {
             rooms: db.collection::<RoomData>("rooms"),
             messages: db.collection::<Message>("messages"),
             options: db.collection::<AppOption>("options"),
-            user_local_data: db.collection::<UserData>("local_data"),
+            local_data: db.collection::<UserData>("local_data"),
             _db: db,
         }
     }
