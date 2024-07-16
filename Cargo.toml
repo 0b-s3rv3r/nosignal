@@ -9,7 +9,7 @@ bson = "2.10.0"
 clap = "4.5.4"
 crossterm = {version = "0.27.0", features = ["event-stream"]}
 dirs = "5.0.1"
-enum-conversion = "0.0.1"
+enum_stringify = "0.5.0"
 futures = "0.3.30"
 futures-channel = "0.3.30"
 futures-timer = "3.0.3"

@@ -1,3 +1,4 @@
+use crate::schema::Color;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -6,6 +7,7 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::error::Error;
 use tokio_tungstenite::tungstenite::protocol::Message;
 
+#[derive(Debug)]
 pub struct ChatClient {
     sender: Sender<Message>,
     receiver: Receiver<Message>,
@@ -63,4 +65,10 @@ impl ChatClient {
         }
         self.receiver.recv().await
     }
+}
+
+pub struct User {
+    id: String,
+    color: Color,
+    addr: String,
 }

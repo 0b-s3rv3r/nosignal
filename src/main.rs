@@ -1,11 +1,11 @@
-// mod app;
-// mod db;
-// mod error;
-// mod schema;
+mod app;
+mod db;
+mod error;
+mod schema;
 // mod test;
-mod tui;
-// mod util;
 mod network;
+mod tui;
+mod util;
 
 use network::client::ChatClient;
 use network::server::ChatServer;

@@ -9,6 +9,7 @@ use tokio::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 use tui_textarea::CursorMove;
 
+#[derive(Debug)]
 pub struct ChatApp<'a> {
     pub room_id: String,
     pub style: WidgetStyle,
@@ -188,7 +189,7 @@ impl<'a> ChatApp<'a> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum CommandEvent {
     BannedUser,
     SetOption,

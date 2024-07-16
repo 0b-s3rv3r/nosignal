@@ -1,62 +1,183 @@
 use crate::db::DbRepo;
 use crate::error::{CommandError, DbError};
-use crate::schema::{AppOpt, AppOption, Color, RoomData, UserData};
+use crate::schema::{Color, LocalData, Room};
 use crate::util::{create_env_dir, get_passwd, get_unique_id};
 
-use clap::{Arg, ArgAction, ArgMatches, Command};
-use log::error;
-use polodb_core::{bson::doc, Collection};
-use strum::IntoEnumIterator;
+use clap::{Arg, ArgMatches, Command};
+use polodb_core::bson::doc;
 
 use std::env;
-use std::net::SocketAddr;
 use std::str::FromStr;
 
+pub fn run() {
+    let cmd_req = get_command_request().unwrap();
+
+    let mut db = db_init(true);
+
+    match cmd_req {
+        CommandRequest::Create {
+            room_id,
+            ip,
+            has_password,
+        } => {
+            // if let Err(DbError::AlreadyExistingId) = create_room(&room_id, has_password) {
+            //     panic!("Room with this id already exists! Try something new!");
+            // }
+        }
+        CommandRequest::Join {
+            room_address,
+            username,
+            color,
+        } => {
+            if let Some(user) = username {
+                // join_room(&room_address, false)
+            } else {
+                // join_room(&room_address, false)
+            }
+        }
+        CommandRequest::Delete { room_id } => delete_room(&mut db, &room_id),
+        CommandRequest::List => list_rooms(&db),
+        CommandRequest::Set { option, value } => set_app_option(&mut db, &option, &value),
+        CommandRequest::Invalid => {
+            println!("Invalid command! Type 'kioto help' for getting help")
+        }
+    }
+}
+
+pub fn db_init(open_memory: bool) -> DbRepo {
+    if open_memory {
+        return DbRepo::memory_init();
+    }
+
+    let db = DbRepo::init(&create_env_dir("kioto").unwrap());
+
+    if db.local_data.count_documents().unwrap() == 0 {
+        db.local_data
+            .insert_one(LocalData {
+                addr: "127.0.0.1:12345".into(),
+                username: get_unique_id(),
+                color: Color::White,
+                remember_passwords: false,
+                light_mode: false,
+            })
+            .unwrap();
+    }
+
+    db
+}
+
+fn create_room(db: &mut DbRepo, room_id: &str, passwd: Option<String>) -> Result<(), DbError> {
+    if let Some(_) = db.rooms.find_one(doc! {"id": room_id}).unwrap() {
+        return Err(DbError::AlreadyExistingId);
+    }
+
+    let new_room = Room {
+        id: room_id.into(),
+        addr: "".into(),
+        passwd,
+        banned_addrs: vec![],
+        is_owner: false,
+    };
+
+    db.rooms.insert_one(&new_room).unwrap();
+
+    Ok(())
+}
+
+fn delete_room(db: &mut DbRepo, room_id: &str) {
+    db.rooms.delete_one(doc! {"room_id": room_id}).unwrap();
+}
+
+fn list_rooms(db: &DbRepo) {
+    let rooms = db.rooms.find(None).unwrap();
+    rooms.for_each(|room| println!("{}", room.unwrap().id));
+}
+
+fn join_room(room_ip: &str, room_id: &str, is_host: bool) {
+    todo!()
+}
+
+fn set_app_option(db: &mut DbRepo, option: &str, value: &str) {
+    let current_state = db
+        .local_data
+        .find_one(doc! {"option": option.to_string()})
+        .unwrap()
+        .unwrap();
+
+    db.local_data
+        .update_one(
+            doc! {"option": option.to_string()},
+            doc! {"value": value.to_string()},
+        )
+        .unwrap();
+}
+
+#[derive(Debug)]
 pub enum CommandRequest {
-    Addr {
-        addr: SocketAddr,
-    },
     Create {
         room_id: String,
+        ip: Option<String>,
         has_password: bool,
     },
     Join {
         room_address: String,
         username: Option<String>,
+        color: Option<Color>,
     },
     Delete {
         room_id: String,
     },
     List,
-    Set(AppOpt),
+    Set {
+        option: String,
+        value: String,
+    },
     Invalid,
 }
 
-pub fn get_command_request() -> Result<CommandRequest, CommandError> {
-    match set_clap_commands().subcommand() {
-        Some(("addr", addr_matches)) => {
-            let arg_addr = addr_matches.get_one::<String>("ipv4").unwrap();
-            let addr = SocketAddr::from_str(&arg_addr).map_err(|_| CommandError::InvalidIpv4)?;
-
-            Ok(CommandRequest::Addr { addr })
-        }
+fn get_command_request() -> Result<CommandRequest, CommandError> {
+    match config_clap().subcommand() {
         Some(("create", create_matches)) => {
             let room_id = create_matches
                 .get_one::<String>("room_id")
                 .unwrap()
                 .to_owned();
+
+            let room_ip = if let Some(room_ip) = create_matches.get_one::<String>("room_ip") {
+                Some(room_ip)
+            } else {
+                None
+            };
+
             let has_password = create_matches.get_flag("password");
             Ok(CommandRequest::Create {
                 room_id,
+                ip: room_ip.cloned(),
                 has_password,
             })
         }
         Some(("join", join_matches)) => {
-            let room_address = join_matches.get_one::<String>("room_address").unwrap();
-            let username = join_matches.get_one::<String>("username");
+            let room_address = join_matches
+                .get_one::<String>("room_address")
+                .unwrap()
+                .to_owned();
+
+            let username = if let Some(username) = join_matches.get_one::<String>("username") {
+                Some(username)
+            } else {
+                None
+            };
+
+            let color = if let Some(color) = join_matches.get_one::<String>("color") {
+                Some(Color::from_str(color).unwrap())
+            } else {
+                None
+            };
+
             Ok(CommandRequest::Join {
-                room_address: room_address.to_owned(),
+                room_address,
                 username: username.cloned(),
+                color,
             })
         }
         Some(("delete", delete_matches)) => {
@@ -69,26 +190,22 @@ pub fn get_command_request() -> Result<CommandRequest, CommandError> {
         Some(("list", _)) => Ok(CommandRequest::List),
         Some(("set", set_matches)) => {
             let option_str = set_matches.get_one::<String>("option").unwrap();
-            let option = AppOpt::from_str(option_str).unwrap();
-            Ok(CommandRequest::Set(option))
+            let value_str = set_matches.get_one::<String>("value").unwrap();
+            Ok(CommandRequest::Set {
+                option: option_str.to_string(),
+                value: value_str.to_string(),
+            })
         }
         _ => Ok(CommandRequest::Invalid),
     }
 }
 
-pub fn set_clap_commands() -> ArgMatches {
+fn config_clap() -> ArgMatches {
     Command::new("kioto")
         .about("Yet another tui chat.")
         .version(env!("CARGO_PKG_VERSION"))
         .subcommand_required(true)
         .arg_required_else_help(true)
-        .subcommand(
-            Command::new("addr")
-                .long_flag("addr")
-                .short_flag('a')
-                .about("Specify custom IPv4")
-                .arg(Arg::new("ipv4").required(true)),
-        )
         .subcommand(
             Command::new("create")
                 .long_flag("create")
@@ -101,7 +218,8 @@ pub fn set_clap_commands() -> ArgMatches {
                         .num_args(0)
                         .required(false),
                 )
-                .arg(Arg::new("room_id").required(true)),
+                .arg(Arg::new("room_id").required(true))
+                .arg(Arg::new("room_ip").required(false)),
         )
         .subcommand(
             Command::new("join")
@@ -109,7 +227,8 @@ pub fn set_clap_commands() -> ArgMatches {
                 .short_flag('j')
                 .about("Joins a room")
                 .arg(Arg::new("room_address").required(true))
-                .arg(Arg::new("username")),
+                .arg(Arg::new("username").required(false))
+                .arg(Arg::new("color").required(false)),
         )
         .subcommand(
             Command::new("delete")
@@ -129,148 +248,8 @@ pub fn set_clap_commands() -> ArgMatches {
                 .long_flag("set")
                 .short_flag('s')
                 .about("Sets an application option")
-                .arg(Arg::new("option").required(true)),
+                .arg(Arg::new("option").required(true))
+                .arg(Arg::new("value").required(true)),
         )
         .get_matches()
-}
-
-pub struct App {
-    pub(crate) db: DbRepo,
-    local_usr: UserData,
-}
-
-impl App {
-    pub fn init() -> App {
-        let db = DbRepo::init(&create_env_dir("kioto").unwrap());
-        App::db_init(db)
-    }
-
-    pub(crate) fn mem_init() -> App {
-        let db = DbRepo::memory_init();
-        App::db_init(db)
-    }
-
-    fn db_init(db: DbRepo) -> App {
-        if db.options.count_documents().unwrap() == 0 {
-            App::insert_app_options(&db.options);
-        }
-
-        if let Some(local_usr) = db.user_local_data.find_one(None).unwrap() {
-            App { db, local_usr }
-        } else {
-            App {
-                db,
-                local_usr: UserData {
-                    user_id: "user".to_owned() + &get_unique_id(),
-                    color: Color::White,
-                    addr: SocketAddr::from_str("placeholder").unwrap(),
-                },
-            }
-        }
-    }
-
-    fn insert_app_options(opt_db: &Collection<AppOption>) {
-        opt_db.insert_many(App::create_app_option_vec()).unwrap();
-    }
-
-    fn create_app_option_vec() -> Vec<AppOption> {
-        AppOpt::iter()
-            .map(|opt| AppOption {
-                option: opt,
-                enabled: false,
-            })
-            .collect()
-    }
-
-    pub fn run(&mut self, runopt: CommandRequest) {
-        match runopt {
-            CommandRequest::Addr { addr } => {
-                self.local_usr.addr = addr;
-                self.db
-                    .user_local_data
-                    .update_one(
-                        doc! {"username": self.local_usr.user_id.clone() },
-                        doc! {"addr": bson::to_bson(&self.local_usr.addr).unwrap() },
-                    )
-                    .unwrap();
-            }
-            CommandRequest::Create {
-                room_id,
-                has_password,
-            } => {
-                if let Err(DbError::AlreadyExistingId) = self.create_room(&room_id, has_password) {
-                    panic!("Room with this id already exists! Try something new!");
-                }
-            }
-            CommandRequest::Join {
-                room_address,
-                username,
-            } => {
-                if let Some(user) = username {
-                    self.join_room(&room_address, &user)
-                } else {
-                    self.join_room(&room_address, "")
-                }
-            }
-            CommandRequest::Delete { room_id } => self.delete_room(&room_id),
-            CommandRequest::List => self.list_rooms(),
-            CommandRequest::Set(option) => self.set_app_option(option),
-            CommandRequest::Invalid => {
-                println!("Invalid command! Type 'kioto help' for getting help")
-            }
-        }
-    }
-
-    fn create_room(&self, room_id: &str, password: bool) -> Result<(), DbError> {
-        if let Some(_) = self.db.rooms.find_one(doc! {"room_id": room_id}).unwrap() {
-            return Err(DbError::AlreadyExistingId);
-        }
-
-        let new_room = RoomData {
-            room_id: room_id.to_owned(),
-            socket_addr: SocketAddr::from_str("new_address_placeholder").unwrap(),
-            password: if password { Some(get_passwd()) } else { None },
-            locked_addrs: vec![],
-            is_owner: true,
-        };
-
-        self.db.rooms.insert_one(&new_room).unwrap();
-
-        Ok(())
-    }
-
-    fn delete_room(&self, room_id: &str) {
-        self.db.rooms.delete_one(doc! {"room_id": room_id}).unwrap();
-    }
-
-    fn list_rooms(&self) {
-        let rooms = self.db.rooms.find(None).unwrap();
-        rooms.for_each(|room| println!("{}", room.unwrap().room_id));
-    }
-
-    fn join_room(&self, room_address: &str, guestname: &str) {
-        todo!()
-    }
-
-    fn set_app_option(&self, option: AppOpt) {
-        let current_state = self
-            .db
-            .options
-            .find_one(doc! {"option": option.to_string()})
-            .unwrap()
-            .unwrap()
-            .enabled;
-
-        self.db
-            .options
-            .update_one(
-                doc! {"option": option.to_string()},
-                doc! {
-                        "$set": {
-                        "enabled": (!current_state)
-                    }
-                },
-            )
-            .unwrap();
-    }
 }

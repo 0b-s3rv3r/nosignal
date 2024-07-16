@@ -12,6 +12,7 @@ use tui_textarea::{CursorMove, Input, TextArea};
 
 const HELP_POPUP_CONTENT: &str = "[ctrl+l] user list\n[ctrl+j] scroll down\n[ctrl+j] scroll up";
 
+#[derive(Debug)]
 pub struct Tui<B: Backend> {
     terminal: Terminal<B>,
 }
@@ -101,6 +102,7 @@ impl<B: Backend> Tui<B> {
     }
 }
 
+#[derive(Debug)]
 pub struct StatefulArea<'a> {
     pub textarea: TextArea<'a>,
     pub height: u16,
@@ -199,6 +201,7 @@ impl<'a> StatefulArea<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct StatefulList<T> {
     pub state: ListState,
     pub items: Vec<T>,
@@ -250,6 +253,7 @@ impl<T> StatefulList<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct MessageItem<'a>(pub Text<'a>);
 
 impl<'a> MessageItem<'a> {
@@ -273,6 +277,7 @@ impl<'a> MessageItem<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct Timer {
     treshold_time: usize,
     counter: usize,
@@ -314,7 +319,7 @@ impl Timer {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WidgetStyle {
     pub block_style: Style,
     pub font_style: Style,
@@ -329,7 +334,7 @@ impl WidgetStyle {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum PopupState {
     Help,
     List,
