@@ -3,14 +3,20 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{layout::*, prelude::*, style::Style, widgets::*};
+use ratatui::{
+    layout::*,
+    prelude::*,
+    style::{Style, Styled},
+    widgets::*,
+};
 use regex::Regex;
 use std::io;
 use tui_pattern_highlighter::highlight_text;
-use tui_popup::Popup;
+use tui_popup::{Popup, SizedWrapper};
 use tui_textarea::{CursorMove, Input, TextArea};
 
-const HELP_POPUP_CONTENT: &str = "[ctrl+l] user list\n[ctrl+j] scroll down\n[ctrl+j] scroll up";
+const HELP_POPUP_CONTENT: &str =
+    "[ctrl+l] user list\n[ctrl+j] scroll down\n[ctrl+j] scroll up\n[ctrl+q] exit";
 
 #[derive(Debug)]
 pub struct Tui<B: Backend> {
@@ -56,19 +62,29 @@ impl<B: Backend> Tui<B> {
 
         match app.current_popup {
             PopupState::Help => {
-                let help_popup =
-                    Popup::new("help", HELP_POPUP_CONTENT).style(app.style.block_style);
+                let popup_content = Paragraph::new(Text::from(HELP_POPUP_CONTENT));
+                let help_popup = Popup::new(SizedWrapper {
+                    inner: popup_content,
+                    width: 21,
+                    height: 5,
+                })
+                .style(app.style.block_style)
+                .title("help");
                 frame.render_widget(&help_popup, frame.size());
             }
             PopupState::List => {
-                let user_list_popup = Popup::new(
-                    "",
-                    app.users
-                        .iter()
-                        .map(|user| Line::from(user.clone()).style(app.style.font_style))
-                        .collect::<Text>(),
-                )
-                .style(app.style.block_style);
+                let user_list_popup = Popup::new(SizedWrapper {
+                    inner: Paragraph::new(
+                        app.users
+                            .iter()
+                            .map(|user| Line::from(user.clone()).style(app.style.font_style))
+                            .collect::<Text>(),
+                    ),
+                    width: 21,
+                    height: 5,
+                })
+                .style(app.style.block_style)
+                .title("users list");
                 frame.render_widget(&user_list_popup, frame.size());
             }
             PopupState::Banned => {
@@ -77,7 +93,6 @@ impl<B: Backend> Tui<B> {
                 }
 
                 let banned_user_popup = Popup::new(
-                    "",
                     Text::from(format!("{} has been banned!", app.last_banned_user))
                         .style(app.style.font_style),
                 )

@@ -1,6 +1,7 @@
 use crate::network::client::ChatClient;
-use crate::tui::ui::Tui;
-use crate::tui::ui::{MessageItem, PopupState, StatefulArea, StatefulList, Timer, WidgetStyle};
+use crate::tui::ui::{
+    MessageItem, PopupState, StatefulArea, StatefulList, Timer, Tui, WidgetStyle,
+};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{prelude::*, style::Style};
 use regex::Regex;
