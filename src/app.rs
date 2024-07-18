@@ -1,7 +1,7 @@
 use crate::db::DbRepo;
 use crate::error::{CommandError, DbError};
 use crate::schema::{Color, LocalData, Room};
-use crate::util::{create_env_dir, get_passwd, get_unique_id};
+use crate::util::{create_env_dir, get_unique_id, hash_passwd, passwd_input};
 
 use clap::{Arg, ArgMatches, Command};
 use polodb_core::bson::doc;
@@ -18,26 +18,18 @@ pub fn run() {
         CommandRequest::Create {
             room_id,
             ip,
-            has_password,
-        } => {
-            // if let Err(DbError::AlreadyExistingId) = create_room(&room_id, has_password) {
-            //     panic!("Room with this id already exists! Try something new!");
-            // }
-        }
+            password,
+        } => create_room(&mut db, &room_id, ip, password).unwrap(),
         CommandRequest::Join {
             room_address,
             username,
             color,
         } => {
-            if let Some(user) = username {
-                // join_room(&room_address, false)
-            } else {
-                // join_room(&room_address, false)
-            }
+            todo!()
         }
         CommandRequest::Delete { room_id } => delete_room(&mut db, &room_id),
         CommandRequest::List => list_rooms(&db),
-        CommandRequest::Set { option, value } => set_app_option(&mut db, &option, &value),
+        CommandRequest::Set { option, value } => set_local_data(&mut db, &option, &value),
         CommandRequest::Invalid => {
             println!("Invalid command! Type 'kioto help' for getting help")
         }
@@ -66,14 +58,27 @@ pub fn db_init(open_memory: bool) -> DbRepo {
     db
 }
 
-fn create_room(db: &mut DbRepo, room_id: &str, passwd: Option<String>) -> Result<(), DbError> {
+fn create_room(
+    db: &mut DbRepo,
+    room_id: &str,
+    room_ip: Option<String>,
+    password: bool,
+) -> Result<(), DbError> {
     if let Some(_) = db.rooms.find_one(doc! {"id": room_id}).unwrap() {
         return Err(DbError::AlreadyExistingId);
     }
 
+    let addr = if let Some(ip) = room_ip {
+        ip
+    } else {
+        db.local_data.find_one(None).unwrap().unwrap().addr
+    };
+
+    let passwd = if password { Some(passwd_input()) } else { None };
+
     let new_room = Room {
         id: room_id.into(),
-        addr: "".into(),
+        addr,
         passwd,
         banned_addrs: vec![],
         is_owner: false,
@@ -85,25 +90,37 @@ fn create_room(db: &mut DbRepo, room_id: &str, passwd: Option<String>) -> Result
 }
 
 fn delete_room(db: &mut DbRepo, room_id: &str) {
+    if let Some(room) = db.rooms.find_one(doc! {"room_id": room_id}).unwrap() {
+        if let Some(passwd) = room.passwd {
+            hash_passwd(&passwd);
+            if passwd_input() != passwd {
+                println!("Wrong password");
+            }
+        }
+    } else {
+        println!("There is no such a room.");
+    }
+
     db.rooms.delete_one(doc! {"room_id": room_id}).unwrap();
+    println!("Succesfully deleted the room.")
 }
 
 fn list_rooms(db: &DbRepo) {
-    let rooms = db.rooms.find(None).unwrap();
-    rooms.for_each(|room| println!("{}", room.unwrap().id));
+    let mut rooms = db.rooms.find(None).unwrap();
+    if !rooms.any(|el| {
+        let room = el.unwrap();
+        println!("{}: {}", room.id, room.addr);
+        true
+    }) {
+        println!("There is no any room yet.")
+    }
 }
 
 fn join_room(room_ip: &str, room_id: &str, is_host: bool) {
     todo!()
 }
 
-fn set_app_option(db: &mut DbRepo, option: &str, value: &str) {
-    let current_state = db
-        .local_data
-        .find_one(doc! {"option": option.to_string()})
-        .unwrap()
-        .unwrap();
-
+fn set_local_data(db: &mut DbRepo, option: &str, value: &str) {
     db.local_data
         .update_one(
             doc! {"option": option.to_string()},
@@ -117,7 +134,7 @@ pub enum CommandRequest {
     Create {
         room_id: String,
         ip: Option<String>,
-        has_password: bool,
+        password: bool,
     },
     Join {
         room_address: String,
@@ -149,11 +166,11 @@ fn get_command_request() -> Result<CommandRequest, CommandError> {
                 None
             };
 
-            let has_password = create_matches.get_flag("password");
+            let password = create_matches.get_flag("password");
             Ok(CommandRequest::Create {
                 room_id,
                 ip: room_ip.cloned(),
-                has_password,
+                password,
             })
         }
         Some(("join", join_matches)) => {

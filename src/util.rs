@@ -9,17 +9,23 @@ pub fn get_unique_id() -> String {
     Uuid::new_v4().to_string()
 }
 
-pub fn get_passwd() -> String {
+pub fn passwd_input() -> String {
     print!("password: ");
     io::stdout().flush().unwrap();
 
+    let passwd = rpassword::read_password().unwrap();
+    hash_passwd(&passwd);
+
+    passwd
+}
+
+pub fn hash_passwd(passwd: &str) {
     Argon2::default()
         .hash_password(
-            rpassword::read_password().unwrap().as_bytes(),
+            passwd.as_bytes(),
             Salt::from_b64("supersecretsalt").unwrap(),
         )
-        .unwrap()
-        .to_string()
+        .unwrap();
 }
 
 pub fn create_env_dir(dir_name: &str) -> Result<PathBuf, std::io::Error> {
