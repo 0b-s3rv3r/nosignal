@@ -1,8 +1,10 @@
+use argon2::{password_hash::Salt, Argon2, PasswordHasher};
+use fern::Dispatch;
+use humantime;
 use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
-
-use argon2::{password_hash::Salt, Argon2, PasswordHasher};
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use uuid::Uuid;
 
 pub fn get_unique_id() -> String {
@@ -12,20 +14,20 @@ pub fn get_unique_id() -> String {
 pub fn passwd_input() -> String {
     print!("password: ");
     io::stdout().flush().unwrap();
-
     let passwd = rpassword::read_password().unwrap();
-    hash_passwd(&passwd);
-
-    passwd
+    hash_passwd(&passwd)
 }
 
-pub fn hash_passwd(passwd: &str) {
+pub fn hash_passwd(passwd: &str) -> String {
     Argon2::default()
         .hash_password(
             passwd.as_bytes(),
-            Salt::from_b64("supersecretsalt").unwrap(),
+            Salt::from_b64("c3VwZXJzZWNyZXRzYWx0").unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .hash
+        .unwrap()
+        .to_string()
 }
 
 pub fn create_env_dir(dir_name: &str) -> Result<PathBuf, std::io::Error> {
@@ -46,4 +48,40 @@ pub fn create_env_dir(dir_name: &str) -> Result<PathBuf, std::io::Error> {
     }
 
     Ok(dir_path)
+}
+
+pub fn setup_logger(log_path: &Path) -> Result<(), fern::InitError> {
+    let info_logger = Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "[{} {} {}] {}",
+                humantime::format_rfc3339_seconds(SystemTime::now()),
+                record.level(),
+                record.target(),
+                message
+            ))
+        })
+        .level(log::LevelFilter::Info)
+        .chain(std::io::stdout());
+
+    let err_logger = Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "[{} {} {}] {}",
+                humantime::format_rfc3339_seconds(SystemTime::now()),
+                record.level(),
+                record.target(),
+                message
+            ))
+        })
+        .level(log::LevelFilter::Error)
+        .chain(std::io::stdout())
+        .chain(fern::log_file(&log_path)?);
+
+    Dispatch::new()
+        .chain(info_logger)
+        .chain(err_logger)
+        .apply()?;
+
+    Ok(())
 }

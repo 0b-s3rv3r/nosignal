@@ -356,3 +356,6 @@ pub enum PopupState {
     Banned,
     None,
 }
+
+#[cfg(test)]
+mod test {}

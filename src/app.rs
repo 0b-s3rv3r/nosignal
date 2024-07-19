@@ -1,18 +1,33 @@
 use crate::db::DbRepo;
+use crate::error::AppError;
 use crate::error::{CommandError, DbError};
 use crate::schema::{Color, LocalData, Room};
-use crate::util::{create_env_dir, get_unique_id, hash_passwd, passwd_input};
-
+use crate::util::{create_env_dir, get_unique_id, hash_passwd, passwd_input, setup_logger};
 use clap::{Arg, ArgMatches, Command};
-use polodb_core::bson::doc;
+use crossterm::style::Stylize;
+use log::{error, info};
+use polodb_core::{bson::doc, Result as pdbResult};
+use std::{env, net::Ipv4Addr, path::Path, str::FromStr};
 
-use std::env;
-use std::str::FromStr;
+pub fn run(cmd_req: CommandRequest, open_memory: bool) -> Result<(), AppError> {
+    let path_result = create_env_dir("kioto");
+    if let Err(err) = path_result {
+        error!("{}", err.to_string());
+        info!("Failed to init env.");
+        return Err(AppError::EnvCreationFailure);
+    }
+    let path = path_result.unwrap();
 
-pub fn run() {
-    let cmd_req = get_command_request().unwrap();
+    let log_path = path.join("output.log");
+    setup_logger(&log_path).unwrap();
 
-    let mut db = db_init(true);
+    let db_result = db_init(open_memory, &path);
+    if let Err(err) = db_result {
+        error!("{}", err.to_string());
+        info!("Failed to init db.");
+        return Err(AppError::DbFailure);
+    };
+    let mut db = db_result.unwrap();
 
     match cmd_req {
         CommandRequest::Create {
@@ -21,29 +36,34 @@ pub fn run() {
             password,
         } => create_room(&mut db, &room_id, ip, password).unwrap(),
         CommandRequest::Join {
-            room_address,
+            id_or_address,
             username,
             color,
         } => {
             todo!()
         }
         CommandRequest::Delete { room_id } => delete_room(&mut db, &room_id),
-        CommandRequest::List => list_rooms(&db),
+        CommandRequest::List => list_rooms_and_local_data(&db),
         CommandRequest::Set { option, value } => set_local_data(&mut db, &option, &value),
         CommandRequest::Invalid => {
-            println!("Invalid command! Type 'kioto help' for getting help")
+            println!(
+                "{}",
+                "Invalid command! Type 'kioto help' for getting help".yellow()
+            );
         }
     }
+
+    Ok(())
 }
 
-pub fn db_init(open_memory: bool) -> DbRepo {
+pub fn db_init(open_memory: bool, db_path: &Path) -> pdbResult<DbRepo> {
     if open_memory {
-        return DbRepo::memory_init();
+        return Ok(DbRepo::memory_init()?);
     }
 
-    let db = DbRepo::init(&create_env_dir("kioto").unwrap());
+    let db = DbRepo::init(db_path)?;
 
-    if db.local_data.count_documents().unwrap() == 0 {
+    if db.local_data.count_documents()? == 0 {
         db.local_data
             .insert_one(LocalData {
                 addr: "127.0.0.1:12345".into(),
@@ -55,7 +75,7 @@ pub fn db_init(open_memory: bool) -> DbRepo {
             .unwrap();
     }
 
-    db
+    Ok(db)
 }
 
 fn create_room(
@@ -105,7 +125,10 @@ fn delete_room(db: &mut DbRepo, room_id: &str) {
     println!("Succesfully deleted the room.")
 }
 
-fn list_rooms(db: &DbRepo) {
+fn list_rooms_and_local_data(db: &DbRepo) {
+    let local_data = db.rooms.find_one(None).unwrap().unwrap();
+    println!("{:?}", local_data);
+
     let mut rooms = db.rooms.find(None).unwrap();
     if !rooms.any(|el| {
         let room = el.unwrap();
@@ -117,7 +140,7 @@ fn list_rooms(db: &DbRepo) {
 }
 
 fn join_room(room_ip: &str, room_id: &str, is_host: bool) {
-    todo!()
+    todo!("if there is no such id then join, but store info temporary")
 }
 
 fn set_local_data(db: &mut DbRepo, option: &str, value: &str) {
@@ -130,6 +153,12 @@ fn set_local_data(db: &mut DbRepo, option: &str, value: &str) {
 }
 
 #[derive(Debug)]
+pub enum IdOrAddr {
+    Id(String),
+    Addr(String),
+}
+
+#[derive(Debug)]
 pub enum CommandRequest {
     Create {
         room_id: String,
@@ -137,7 +166,7 @@ pub enum CommandRequest {
         password: bool,
     },
     Join {
-        room_address: String,
+        id_or_address: IdOrAddr,
         username: Option<String>,
         color: Option<Color>,
     },
@@ -174,10 +203,16 @@ fn get_command_request() -> Result<CommandRequest, CommandError> {
             })
         }
         Some(("join", join_matches)) => {
-            let room_address = join_matches
-                .get_one::<String>("room_address")
+            let id_or_addr_ = join_matches
+                .get_one::<String>("id_or_addr")
                 .unwrap()
                 .to_owned();
+
+            let id_or_addr = if Ipv4Addr::from_str(&id_or_addr_).is_ok() {
+                IdOrAddr::Addr(id_or_addr_)
+            } else {
+                IdOrAddr::Id(id_or_addr_)
+            };
 
             let username = if let Some(username) = join_matches.get_one::<String>("username") {
                 Some(username)
@@ -192,7 +227,7 @@ fn get_command_request() -> Result<CommandRequest, CommandError> {
             };
 
             Ok(CommandRequest::Join {
-                room_address,
+                id_or_address: id_or_addr,
                 username: username.cloned(),
                 color,
             })
@@ -243,7 +278,7 @@ fn config_clap() -> ArgMatches {
                 .long_flag("join")
                 .short_flag('j')
                 .about("Joins a room")
-                .arg(Arg::new("room_address").required(true))
+                .arg(Arg::new("id_or_addr").required(true))
                 .arg(Arg::new("username").required(false))
                 .arg(Arg::new("color").required(false)),
         )
@@ -269,4 +304,25 @@ fn config_clap() -> ArgMatches {
                 .arg(Arg::new("value").required(true)),
         )
         .get_matches()
+}
+
+#[cfg(test)]
+mod test {
+    use super::{run, DbRepo};
+    use polodb_core::bson::doc;
+
+    #[test]
+    fn new_room_creation() {}
+
+    #[test]
+    fn room_deletion() {}
+
+    #[test]
+    fn local_data_update() {}
+
+    #[test]
+    fn data_listing() {}
+
+    #[test]
+    fn room_joining() {}
 }

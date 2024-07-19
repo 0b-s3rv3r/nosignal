@@ -7,3 +7,9 @@ pub enum DbError {
 pub enum CommandError {
     InvalidIpv4,
 }
+
+#[derive(Debug)]
+pub enum AppError {
+    EnvCreationFailure,
+    DbFailure,
+}

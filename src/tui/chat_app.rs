@@ -195,3 +195,6 @@ pub enum CommandEvent {
     BannedUser,
     SetOption,
 }
+
+#[cfg(test)]
+mod test {}

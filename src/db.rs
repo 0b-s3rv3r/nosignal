@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use polodb_core::{Collection, Database};
+use polodb_core::{Collection, Database, Result as pdbResult};
 
 use crate::schema::{LocalData, Message, Room};
 
@@ -12,25 +12,25 @@ pub struct DbRepo {
 }
 
 impl DbRepo {
-    pub fn init(filepath: &Path) -> Self {
-        let db = Database::open_file(filepath).unwrap();
+    pub fn init(filepath: &Path) -> pdbResult<Self> {
+        let db = Database::open_file(filepath)?;
 
-        DbRepo {
+        Ok(DbRepo {
             rooms: db.collection::<Room>("rooms"),
             messages: db.collection::<Message>("messages"),
             local_data: db.collection::<LocalData>("local_data"),
             _db: db,
-        }
+        })
     }
 
-    pub(crate) fn memory_init() -> Self {
-        let db = Database::open_memory().unwrap();
+    pub(crate) fn memory_init() -> pdbResult<Self> {
+        let db = Database::open_memory()?;
 
-        DbRepo {
+        Ok(DbRepo {
             rooms: db.collection::<Room>("rooms"),
             messages: db.collection::<Message>("messages"),
             local_data: db.collection::<LocalData>("local_data"),
             _db: db,
-        }
+        })
     }
 }
