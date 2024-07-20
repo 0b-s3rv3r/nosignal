@@ -1,17 +1,16 @@
 mod app;
 mod db;
 mod error;
-mod schema;
-// mod test;
 mod network;
+mod schema;
 mod tui;
 mod util;
 
+// use app::{get_command_request, run};
 use network::client::ChatClient;
 use network::server::ChatServer;
-use tui::chat_app::ChatApp;
-
 use std::{env, io};
+use tui::chat_app::ChatApp;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -43,4 +42,6 @@ async fn main() -> io::Result<()> {
     }
 
     Ok(())
+
+    // run(get_command_request(), true)
 }

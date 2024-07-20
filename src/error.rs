@@ -1,15 +1,19 @@
-#[derive(Debug)]
-pub enum DbError {
-    AlreadyExistingId,
-}
+use polodb_core::Error as pdbError;
+use std::io::Error as ioError;
+use thiserror::Error;
 
-#[derive(Debug)]
-pub enum CommandError {
-    InvalidIpv4,
-}
-
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum AppError {
-    EnvCreationFailure,
-    DbFailure,
+    #[error("{0}")]
+    PdbError(pdbError),
+    #[error("This id already exists.")]
+    AlreadyExistingId,
+    #[error("Data not found in database.")]
+    DataNotFound,
+    #[error("Invalid password.")]
+    InvalidPassword,
+    #[error("No such room")]
+    NotExistingId,
+    #[error("There is no any room yet")]
+    NoAnyRoom,
 }

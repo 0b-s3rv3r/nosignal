@@ -1,50 +1,72 @@
-use crate::db::DbRepo;
-use crate::error::AppError;
-use crate::error::{CommandError, DbError};
-use crate::schema::{Color, LocalData, Room};
-use crate::util::{create_env_dir, get_unique_id, hash_passwd, passwd_input, setup_logger};
+use crate::{
+    db::DbRepo,
+    error::AppError,
+    schema::{Color, LocalData, Room},
+    util::{create_env_dir, get_unique_id, hash_passwd, passwd_input, setup_logger},
+};
 use clap::{Arg, ArgMatches, Command};
 use crossterm::style::Stylize;
-use log::{error, info};
+use log::error;
 use polodb_core::{bson::doc, Result as pdbResult};
 use std::{env, net::Ipv4Addr, path::Path, str::FromStr};
 
-pub fn run(cmd_req: CommandRequest, open_memory: bool) -> Result<(), AppError> {
-    let path_result = create_env_dir("kioto");
-    if let Err(err) = path_result {
-        error!("{}", err.to_string());
-        info!("Failed to init env.");
-        return Err(AppError::EnvCreationFailure);
-    }
-    let path = path_result.unwrap();
+pub fn run(cmd_req: CommandRequest, open_memory: bool) -> i32 {
+    let path = match create_env_dir("kioto") {
+        Ok(path) => path,
+        Err(err) => {
+            error!("{}", err.to_string());
+            println!("{}", "Failed to init env.".red());
+            return 1;
+        }
+    };
 
     let log_path = path.join("output.log");
     setup_logger(&log_path).unwrap();
 
-    let db_result = db_init(open_memory, &path);
-    if let Err(err) = db_result {
-        error!("{}", err.to_string());
-        info!("Failed to init db.");
-        return Err(AppError::DbFailure);
+    let mut db = match db_init(open_memory, &path) {
+        Ok(db) => db,
+        Err(err) => {
+            error!("{}", err.to_string());
+            println!("{}", "Failed to init db.".red());
+            return 1;
+        }
     };
-    let mut db = db_result.unwrap();
 
     match cmd_req {
         CommandRequest::Create {
             room_id,
             ip,
             password,
-        } => create_room(&mut db, &room_id, ip, password).unwrap(),
+        } => match create_room(&mut db, &room_id, ip, password) {
+            Ok(_) => todo!(),
+            Err(_) => todo!(),
+        },
         CommandRequest::Join {
             id_or_address,
             username,
             color,
-        } => {
-            todo!()
-        }
-        CommandRequest::Delete { room_id } => delete_room(&mut db, &room_id),
-        CommandRequest::List => list_rooms_and_local_data(&db),
-        CommandRequest::Set { option, value } => set_local_data(&mut db, &option, &value),
+        } => match id_or_address {
+            IdOrAddr::Id(id) => match join_room(None, Some(&id), username, color) {
+                Ok(_) => todo!(),
+                Err(_) => todo!(),
+            },
+            IdOrAddr::Addr(addr) => match join_room(Some(&addr), None, username, color) {
+                Ok(_) => todo!(),
+                Err(_) => todo!(),
+            },
+        },
+        CommandRequest::Delete { room_id } => match delete_room(&mut db, &room_id) {
+            Ok(_) => todo!(),
+            Err(_) => todo!(),
+        },
+        CommandRequest::List => match list_rooms_and_local_data(&db) {
+            Ok(_) => todo!(),
+            Err(_) => todo!(),
+        },
+        CommandRequest::Set { option, value } => match set_local_data(&mut db, &option, &value) {
+            Ok(_) => todo!(),
+            Err(_) => todo!(),
+        },
         CommandRequest::Invalid => {
             println!(
                 "{}",
@@ -53,7 +75,7 @@ pub fn run(cmd_req: CommandRequest, open_memory: bool) -> Result<(), AppError> {
         }
     }
 
-    Ok(())
+    0
 }
 
 pub fn db_init(open_memory: bool, db_path: &Path) -> pdbResult<DbRepo> {
@@ -83,73 +105,105 @@ fn create_room(
     room_id: &str,
     room_ip: Option<String>,
     password: bool,
-) -> Result<(), DbError> {
-    if let Some(_) = db.rooms.find_one(doc! {"id": room_id}).unwrap() {
-        return Err(DbError::AlreadyExistingId);
+) -> Result<(), AppError> {
+    if db
+        .rooms
+        .find_one(doc! {"id": room_id})
+        .map_err(|e| AppError::PdbError(e))?
+        .is_some()
+    {
+        return Err(AppError::AlreadyExistingId);
     }
 
-    let addr = if let Some(ip) = room_ip {
-        ip
-    } else {
-        db.local_data.find_one(None).unwrap().unwrap().addr
+    let addr = match room_ip {
+        Some(ip) => ip,
+        None => {
+            db.local_data
+                .find_one(None)
+                .map_err(|e| AppError::PdbError(e))?
+                .ok_or(AppError::DataNotFound)?
+                .addr
+        }
     };
 
     let passwd = if password { Some(passwd_input()) } else { None };
 
-    let new_room = Room {
-        id: room_id.into(),
-        addr,
-        passwd,
-        banned_addrs: vec![],
-        is_owner: false,
-    };
-
-    db.rooms.insert_one(&new_room).unwrap();
+    db.rooms
+        .insert_one(&Room {
+            id: room_id.into(),
+            addr,
+            passwd,
+            banned_addrs: vec![],
+            is_owner: false,
+        })
+        .map_err(|e| AppError::PdbError(e))?;
 
     Ok(())
 }
 
-fn delete_room(db: &mut DbRepo, room_id: &str) {
-    if let Some(room) = db.rooms.find_one(doc! {"room_id": room_id}).unwrap() {
-        if let Some(passwd) = room.passwd {
-            hash_passwd(&passwd);
-            if passwd_input() != passwd {
-                println!("Wrong password");
+fn delete_room(db: &mut DbRepo, room_id: &str) -> Result<(), AppError> {
+    if let Some(room) = db
+        .rooms
+        .find_one(doc! {"room_id": room_id})
+        .map_err(|e| AppError::PdbError(e))?
+    {
+        if room.is_owner {
+            if let Some(passwd) = room.passwd {
+                hash_passwd(&passwd);
+                if passwd_input() != passwd {
+                    return Err(AppError::InvalidPassword);
+                }
             }
         }
     } else {
-        println!("There is no such a room.");
+        return Err(AppError::NotExistingId);
     }
 
-    db.rooms.delete_one(doc! {"room_id": room_id}).unwrap();
-    println!("Succesfully deleted the room.")
+    db.rooms
+        .delete_one(doc! {"room_id": room_id})
+        .map_err(|e| AppError::PdbError(e))?;
+    Ok(())
 }
 
-fn list_rooms_and_local_data(db: &DbRepo) {
-    let local_data = db.rooms.find_one(None).unwrap().unwrap();
+fn list_rooms_and_local_data(db: &DbRepo) -> Result<(), AppError> {
+    let local_data = db
+        .rooms
+        .find_one(None)
+        .map_err(|e| AppError::PdbError(e))?
+        .ok_or(AppError::DataNotFound)?;
+
     println!("{:?}", local_data);
 
-    let mut rooms = db.rooms.find(None).unwrap();
+    let mut rooms = db.rooms.find(None).map_err(|e| AppError::PdbError(e))?;
     if !rooms.any(|el| {
         let room = el.unwrap();
         println!("{}: {}", room.id, room.addr);
         true
     }) {
-        println!("There is no any room yet.")
+        return Err(AppError::NoAnyRoom);
     }
+
+    Ok(())
 }
 
-fn join_room(room_ip: &str, room_id: &str, is_host: bool) {
+fn join_room(
+    room_ip: Option<&str>,
+    room_id: Option<&str>,
+    username: Option<String>,
+    color: Option<Color>,
+) -> Result<(), AppError> {
     todo!("if there is no such id then join, but store info temporary")
 }
 
-fn set_local_data(db: &mut DbRepo, option: &str, value: &str) {
+fn set_local_data(db: &mut DbRepo, option: &str, value: &str) -> Result<(), AppError> {
     db.local_data
         .update_one(
             doc! {"option": option.to_string()},
             doc! {"value": value.to_string()},
         )
-        .unwrap();
+        .map_err(|e| AppError::PdbError(e))?;
+
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -181,7 +235,7 @@ pub enum CommandRequest {
     Invalid,
 }
 
-fn get_command_request() -> Result<CommandRequest, CommandError> {
+pub fn get_command_request() -> CommandRequest {
     match config_clap().subcommand() {
         Some(("create", create_matches)) => {
             let room_id = create_matches
@@ -196,11 +250,11 @@ fn get_command_request() -> Result<CommandRequest, CommandError> {
             };
 
             let password = create_matches.get_flag("password");
-            Ok(CommandRequest::Create {
+            CommandRequest::Create {
                 room_id,
                 ip: room_ip.cloned(),
                 password,
-            })
+            }
         }
         Some(("join", join_matches)) => {
             let id_or_addr_ = join_matches
@@ -226,29 +280,29 @@ fn get_command_request() -> Result<CommandRequest, CommandError> {
                 None
             };
 
-            Ok(CommandRequest::Join {
+            CommandRequest::Join {
                 id_or_address: id_or_addr,
                 username: username.cloned(),
                 color,
-            })
+            }
         }
         Some(("delete", delete_matches)) => {
             let room_id = delete_matches
                 .get_one::<String>("room_id")
                 .unwrap()
                 .to_owned();
-            Ok(CommandRequest::Delete { room_id })
+            CommandRequest::Delete { room_id }
         }
-        Some(("list", _)) => Ok(CommandRequest::List),
+        Some(("list", _)) => CommandRequest::List,
         Some(("set", set_matches)) => {
             let option_str = set_matches.get_one::<String>("option").unwrap();
             let value_str = set_matches.get_one::<String>("value").unwrap();
-            Ok(CommandRequest::Set {
+            CommandRequest::Set {
                 option: option_str.to_string(),
                 value: value_str.to_string(),
-            })
+            }
         }
-        _ => Ok(CommandRequest::Invalid),
+        _ => CommandRequest::Invalid,
     }
 }
 

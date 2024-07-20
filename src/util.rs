@@ -51,20 +51,7 @@ pub fn create_env_dir(dir_name: &str) -> Result<PathBuf, std::io::Error> {
 }
 
 pub fn setup_logger(log_path: &Path) -> Result<(), fern::InitError> {
-    let info_logger = Dispatch::new()
-        .format(|out, message, record| {
-            out.finish(format_args!(
-                "[{} {} {}] {}",
-                humantime::format_rfc3339_seconds(SystemTime::now()),
-                record.level(),
-                record.target(),
-                message
-            ))
-        })
-        .level(log::LevelFilter::Info)
-        .chain(std::io::stdout());
-
-    let err_logger = Dispatch::new()
+    Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
                 "[{} {} {}] {}",
@@ -76,11 +63,7 @@ pub fn setup_logger(log_path: &Path) -> Result<(), fern::InitError> {
         })
         .level(log::LevelFilter::Error)
         .chain(std::io::stdout())
-        .chain(fern::log_file(&log_path)?);
-
-    Dispatch::new()
-        .chain(info_logger)
-        .chain(err_logger)
+        .chain(fern::log_file(&log_path)?)
         .apply()?;
 
     Ok(())
