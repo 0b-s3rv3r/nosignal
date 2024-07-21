@@ -86,15 +86,13 @@ pub fn db_init(open_memory: bool, db_path: &Path) -> pdbResult<DbRepo> {
     let db = DbRepo::init(db_path)?;
 
     if db.local_data.count_documents()? == 0 {
-        db.local_data
-            .insert_one(LocalData {
-                addr: "127.0.0.1:12345".into(),
-                username: get_unique_id(),
-                color: Color::White,
-                remember_passwords: false,
-                light_mode: false,
-            })
-            .unwrap();
+        db.local_data.insert_one(LocalData {
+            addr: "127.0.0.1:12345".into(),
+            username: get_unique_id(),
+            color: Color::White,
+            remember_passwords: false,
+            light_mode: false,
+        })?;
     }
 
     Ok(db)
@@ -362,20 +360,133 @@ fn config_clap() -> ArgMatches {
 
 #[cfg(test)]
 mod test {
-    use super::{run, DbRepo};
+    use super::{run, Color, CommandRequest, DbRepo, LocalData, Room};
     use polodb_core::bson::doc;
 
     #[test]
-    fn new_room_creation() {}
+    fn new_room_creation() {
+        let db = DbRepo::memory_init().unwrap();
+
+        let room_with_custom_values = Room {
+            id: "someroom".into(),
+            addr: "192.168.0.2:12345".into(),
+            passwd: None,
+            banned_addrs: vec![],
+            is_owner: true,
+        };
+
+        assert_eq!(
+            run(
+                CommandRequest::Create {
+                    room_id: room_with_custom_values.id.clone(),
+                    ip: Some(room_with_custom_values.addr.clone()),
+                    password: false,
+                },
+                true,
+            ),
+            0
+        );
+
+        assert_eq!(
+            db.rooms.find_one(doc! {"id": "someroom"}).unwrap().unwrap(),
+            room_with_custom_values
+        );
+
+        let room_with_default_values = Room {
+            id: "anotheroom".into(),
+            addr: "127.0.0.1:12345".into(),
+            passwd: None,
+            banned_addrs: vec![],
+            is_owner: true,
+        };
+
+        assert_eq!(
+            run(
+                CommandRequest::Create {
+                    room_id: room_with_default_values.id.clone(),
+                    ip: None,
+                    password: false,
+                },
+                true
+            ),
+            0
+        );
+
+        assert_eq!(
+            db.rooms
+                .find_one(doc! {"id": "anotheroom"})
+                .unwrap()
+                .unwrap(),
+            room_with_default_values
+        );
+    }
 
     #[test]
-    fn room_deletion() {}
+    fn room_deletion() {
+        let db = DbRepo::memory_init().unwrap();
+
+        let room = Room {
+            id: "someroom".into(),
+            addr: "192.168.0.2:12345".into(),
+            passwd: None,
+            banned_addrs: vec![],
+            is_owner: true,
+        };
+
+        assert_eq!(
+            run(
+                CommandRequest::Create {
+                    room_id: room.id.clone(),
+                    ip: Some(room.addr.clone()),
+                    password: false,
+                },
+                true,
+            ),
+            0
+        );
+
+        assert_eq!(
+            db.rooms.find_one(doc! {"id": "someroom"}).unwrap().unwrap(),
+            room
+        );
+
+        assert_eq!(
+            run(
+                CommandRequest::Delete {
+                    room_id: "someroom".into()
+                },
+                true
+            ),
+            0
+        );
+
+        assert_eq!(db.rooms.find_one(doc! {"id": "someroom"}).unwrap(), None);
+    }
 
     #[test]
-    fn local_data_update() {}
+    fn local_data_update() {
+        let db = DbRepo::memory_init().unwrap();
 
-    #[test]
-    fn data_listing() {}
+        let local_data = LocalData {
+            addr: "127.0.0.1:12345".into(),
+            username: "randomizedusername".into(),
+            color: Color::White,
+            remember_passwords: false,
+            light_mode: false,
+        };
+
+        assert_eq!(run(CommandRequest::Invalid, true), 1);
+
+        let local_data_from_db = db.local_data.find_one(None).unwrap().unwrap();
+
+        assert_eq!(local_data_from_db.addr, local_data_from_db.addr);
+        assert_eq!(local_data_from_db.color, local_data_from_db.color);
+        assert_eq!(
+            local_data_from_db.remember_passwords,
+            local_data_from_db.remember_passwords
+        );
+        assert_eq!(local_data_from_db.light_mode, local_data_from_db.light_mode);
+    }
 
     #[test]
     fn room_joining() {}

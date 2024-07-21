@@ -7,6 +7,7 @@ use ratatui::{
     layout::*,
     prelude::*,
     style::{Style, Styled},
+    symbols::border,
     widgets::*,
 };
 use regex::Regex;
@@ -49,7 +50,7 @@ impl<B: Backend> Tui<B> {
                     .title(app.room_id.clone())
                     .borders(Borders::ALL)
                     .padding(Padding::new(2, 2, 1, 1))
-                    .border_set(symbols::border::ROUNDED),
+                    .border_set(border::ROUNDED),
             )
             .style(app.style.block_style)
             .direction(ListDirection::TopToBottom);
@@ -136,7 +137,7 @@ impl<'a> StatefulArea<'a> {
                 .borders(Borders::ALL)
                 .set_style(style.block_style)
                 .padding(Padding::new(2, 2, 1, 1))
-                .border_set(symbols::border::ROUNDED),
+                .border_set(border::ROUNDED),
         );
         _ = textarea.set_search_pattern(r"@\w+");
         textarea.set_placeholder_text("Start typing...");

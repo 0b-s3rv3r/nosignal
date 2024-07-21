@@ -2,7 +2,7 @@ use enum_stringify::EnumStringify;
 use ratatui::style::Color as ratColor;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Room {
     pub id: String,
     pub addr: String,
@@ -21,7 +21,7 @@ pub struct Message {
     pub timestamp: std::time::SystemTime,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalData {
     pub addr: String,
     pub username: String,
@@ -30,7 +30,7 @@ pub struct LocalData {
     pub light_mode: bool,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, EnumStringify)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Debug, EnumStringify)]
 pub enum Color {
     Reset,
     Black,

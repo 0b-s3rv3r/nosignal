@@ -8,7 +8,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::tungstenite::protocol::Message;
+use tokio_tungstenite::{
+    accept_async, tungstenite::protocol::Message, tungstenite::Error as TtError,
+};
 
 type Tx = UnboundedSender<Message>;
 type PeerMap = Arc<Mutex<HashMap<SocketAddr, Tx>>>;
@@ -42,8 +44,12 @@ impl ChatServer {
         Ok(())
     }
 
-    async fn handle_conection(peer_map: PeerMap, raw_stream: TcpStream, addr: SocketAddr) {
-        let ws_stream = tokio_tungstenite::accept_async(raw_stream).await.unwrap();
+    async fn handle_conection(
+        peer_map: PeerMap,
+        raw_stream: TcpStream,
+        addr: SocketAddr,
+    ) -> Result<(), TtError> {
+        let ws_stream = accept_async(raw_stream).await?;
         debug!("Connection established with {addr}");
 
         let (tx, rx) = unbounded();
@@ -76,5 +82,7 @@ impl ChatServer {
         peer_map.lock().unwrap().remove(&addr);
 
         debug!("{} disconnected", &addr);
+
+        Ok(())
     }
 }
