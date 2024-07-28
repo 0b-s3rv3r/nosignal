@@ -1,24 +1,25 @@
 use enum_stringify::EnumStringify;
 use ratatui::style::Color as ratColor;
 use serde::{Deserialize, Serialize};
+use std::{net::SocketAddr, time::SystemTime};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Room {
     pub id: String,
     pub addr: String,
     pub passwd: Option<String>,
-    pub banned_addrs: Vec<String>,
+    pub banned_addrs: Vec<SocketAddr>,
     pub is_owner: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Message {
     pub msg_id: u32,
     pub sender_id: String,
     pub sender_color: Color,
     pub chatroom_id: String,
     pub content: String,
-    pub timestamp: std::time::SystemTime,
+    pub timestamp: SystemTime,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -30,7 +31,7 @@ pub struct LocalData {
     pub light_mode: bool,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Debug, EnumStringify)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, EnumStringify)]
 pub enum Color {
     Reset,
     Black,

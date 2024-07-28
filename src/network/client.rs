@@ -1,4 +1,5 @@
-use crate::schema::Color;
+use super::{ChatMessage, User};
+use crate::schema::Room;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -11,15 +12,28 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 pub struct ChatClient {
     sender: Sender<Message>,
     receiver: Receiver<Message>,
+    pub user: User,
+    pub room: Room,
+    pub users: Vec<User>,
 }
 
 impl ChatClient {
-    pub async fn connect(url: &str) -> Result<Self, Error> {
-        let (ws_stream, _) = connect_async(url).await?;
+    pub async fn connect(room: Room, user: &User) -> Result<Self, Error> {
+        let (ws_stream, _) = connect_async(format!("ws://{}/", room.addr)).await?;
         let (write, read) = ws_stream.split();
 
         let (tx, mut rx) = mpsc::channel::<Message>(100);
         let (tx_in, rx_in) = mpsc::channel::<Message>(100);
+
+        tx.send(Message::text(
+            ChatMessage::UserJoined {
+                user: user.clone(),
+                passwd: room.passwd.clone(),
+            }
+            .to_string(),
+        ))
+        .await
+        .unwrap();
 
         task::spawn(async move {
             let mut read = read;
@@ -52,23 +66,40 @@ impl ChatClient {
         Ok(ChatClient {
             sender: tx,
             receiver: rx_in,
+            user: user.clone(),
+            room,
+            users: vec![user.clone()],
         })
     }
 
-    pub async fn send(&self, msg: Message) -> Result<(), mpsc::error::SendError<Message>> {
-        self.sender.send(msg).await
+    pub async fn send(&self, msg: &ChatMessage) -> Result<(), mpsc::error::SendError<Message>> {
+        self.sender.send(Message::Text(msg.to_string())).await
     }
 
-    pub async fn receive(&mut self) -> Option<Message> {
+    pub async fn receive(&mut self) -> Option<ChatMessage> {
         if self.receiver.is_empty() {
             return None;
         }
-        self.receiver.recv().await
-    }
-}
 
-pub struct User {
-    id: String,
-    color: Color,
-    addr: String,
+        let msg = ChatMessage::from(self.receiver.recv().await.unwrap());
+        match msg {
+            ChatMessage::Ban { addr, .. } => self.users.retain(|r| r.addr.unwrap() != addr),
+            ChatMessage::UserJoined { ref user, .. } => self.users.push(user.clone()),
+            ChatMessage::UserLeft { ref user_id } => self.users.retain(|r| r.id != *user_id),
+            _ => (),
+        }
+
+        Some(msg)
+    }
+
+    pub async fn messages_request(&self) {
+        self.sender
+            .send(Message::text(
+                ChatMessage::FetchMessagesReq {
+                    passwd: self.room.passwd.clone(),
+                }
+                .to_string(),
+            ))
+            .await;
+    }
 }

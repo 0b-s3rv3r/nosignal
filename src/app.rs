@@ -6,84 +6,53 @@ use crate::{
 };
 use clap::{Arg, ArgMatches, Command};
 use crossterm::style::Stylize;
-use log::error;
 use polodb_core::{bson::doc, Result as pdbResult};
 use std::{env, net::Ipv4Addr, path::Path, str::FromStr};
 
-pub fn run(cmd_req: CommandRequest, open_memory: bool) -> i32 {
-    let path = match create_env_dir("kioto") {
-        Ok(path) => path,
-        Err(err) => {
-            error!("{}", err.to_string());
-            println!("{}", "Failed to init env.".red());
-            return 1;
-        }
+pub fn run(cmd_req: CommandRequest, open_memory: bool) -> Result<(), AppError> {
+    let path = create_env_dir("kioto").map_err(|e| AppError::IoError(e))?;
+
+    let log_path = path.join("errors.log");
+    setup_logger(&log_path).expect(format!("{}", "Failed to set up logger.".red()).as_str());
+
+    let mut db = if open_memory {
+        db_init(None).map_err(|e| AppError::PdbError(e))?
+    } else {
+        db_init(Some(&path)).map_err(|e| AppError::PdbError(e))?
     };
 
-    let log_path = path.join("output.log");
-    setup_logger(&log_path).unwrap();
+    run_option(cmd_req, &mut db)?;
 
-    let mut db = match db_init(open_memory, &path) {
-        Ok(db) => db,
-        Err(err) => {
-            error!("{}", err.to_string());
-            println!("{}", "Failed to init db.".red());
-            return 1;
-        }
-    };
+    Ok(())
+}
 
+fn run_option(cmd_req: CommandRequest, db: &mut DbRepo) -> Result<(), AppError> {
     match cmd_req {
         CommandRequest::Create {
             room_id,
             ip,
             password,
-        } => match create_room(&mut db, &room_id, ip, password) {
-            Ok(_) => todo!(),
-            Err(_) => todo!(),
-        },
+        } => create_room(db, &room_id, ip, password)?,
         CommandRequest::Join {
             id_or_address,
             username,
             color,
-        } => match id_or_address {
-            IdOrAddr::Id(id) => match join_room(None, Some(&id), username, color) {
-                Ok(_) => todo!(),
-                Err(_) => todo!(),
-            },
-            IdOrAddr::Addr(addr) => match join_room(Some(&addr), None, username, color) {
-                Ok(_) => todo!(),
-                Err(_) => todo!(),
-            },
-        },
-        CommandRequest::Delete { room_id } => match delete_room(&mut db, &room_id) {
-            Ok(_) => todo!(),
-            Err(_) => todo!(),
-        },
-        CommandRequest::List => match list_rooms_and_local_data(&db) {
-            Ok(_) => todo!(),
-            Err(_) => todo!(),
-        },
-        CommandRequest::Set { option, value } => match set_local_data(&mut db, &option, &value) {
-            Ok(_) => todo!(),
-            Err(_) => todo!(),
-        },
-        CommandRequest::Invalid => {
-            println!(
-                "{}",
-                "Invalid command! Type 'kioto help' for getting help".yellow()
-            );
-        }
+        } => join_room(id_or_address, username, color)?,
+        CommandRequest::Delete { room_id } => delete_room(db, &room_id)?,
+        CommandRequest::List => list_rooms_and_local_data(&db)?,
+        CommandRequest::Set { option, value } => set_local_data(db, &option, &value)?,
+        CommandRequest::Invalid => return Err(AppError::InvalidCommand),
     }
 
-    0
+    Ok(())
 }
 
-pub fn db_init(open_memory: bool, db_path: &Path) -> pdbResult<DbRepo> {
-    if open_memory {
+pub fn db_init(db_path: Option<&Path>) -> pdbResult<DbRepo> {
+    if db_path.is_none() {
         return Ok(DbRepo::memory_init()?);
     }
 
-    let db = DbRepo::init(db_path)?;
+    let db = DbRepo::init(db_path.unwrap())?;
 
     if db.local_data.count_documents()? == 0 {
         db.local_data.insert_one(LocalData {
@@ -132,7 +101,7 @@ fn create_room(
             addr,
             passwd,
             banned_addrs: vec![],
-            is_owner: false,
+            is_owner: true,
         })
         .map_err(|e| AppError::PdbError(e))?;
 
@@ -185,8 +154,7 @@ fn list_rooms_and_local_data(db: &DbRepo) -> Result<(), AppError> {
 }
 
 fn join_room(
-    room_ip: Option<&str>,
-    room_id: Option<&str>,
+    id_or_addr: IdOrAddr,
     username: Option<String>,
     color: Option<Color>,
 ) -> Result<(), AppError> {
@@ -360,12 +328,14 @@ fn config_clap() -> ArgMatches {
 
 #[cfg(test)]
 mod test {
-    use super::{run, Color, CommandRequest, DbRepo, LocalData, Room};
+    use crate::app::{db_init, run_option};
+
+    use super::{Color, CommandRequest, LocalData, Room};
     use polodb_core::bson::doc;
 
     #[test]
     fn new_room_creation() {
-        let db = DbRepo::memory_init().unwrap();
+        let mut db = db_init(None).unwrap();
 
         let room_with_custom_values = Room {
             id: "someroom".into(),
@@ -375,17 +345,15 @@ mod test {
             is_owner: true,
         };
 
-        assert_eq!(
-            run(
-                CommandRequest::Create {
-                    room_id: room_with_custom_values.id.clone(),
-                    ip: Some(room_with_custom_values.addr.clone()),
-                    password: false,
-                },
-                true,
-            ),
-            0
-        );
+        run_option(
+            CommandRequest::Create {
+                room_id: room_with_custom_values.id.clone(),
+                ip: Some(room_with_custom_values.addr.clone()),
+                password: false,
+            },
+            &mut db,
+        )
+        .unwrap();
 
         assert_eq!(
             db.rooms.find_one(doc! {"id": "someroom"}).unwrap().unwrap(),
@@ -400,17 +368,15 @@ mod test {
             is_owner: true,
         };
 
-        assert_eq!(
-            run(
-                CommandRequest::Create {
-                    room_id: room_with_default_values.id.clone(),
-                    ip: None,
-                    password: false,
-                },
-                true
-            ),
-            0
-        );
+        run_option(
+            CommandRequest::Create {
+                room_id: room_with_default_values.id.clone(),
+                ip: None,
+                password: false,
+            },
+            &mut db,
+        )
+        .unwrap();
 
         assert_eq!(
             db.rooms
@@ -423,7 +389,7 @@ mod test {
 
     #[test]
     fn room_deletion() {
-        let db = DbRepo::memory_init().unwrap();
+        let mut db = db_init(None).unwrap();
 
         let room = Room {
             id: "someroom".into(),
@@ -433,49 +399,45 @@ mod test {
             is_owner: true,
         };
 
-        assert_eq!(
-            run(
-                CommandRequest::Create {
-                    room_id: room.id.clone(),
-                    ip: Some(room.addr.clone()),
-                    password: false,
-                },
-                true,
-            ),
-            0
-        );
+        run_option(
+            CommandRequest::Create {
+                room_id: room.id.clone(),
+                ip: Some(room.addr.clone()),
+                password: false,
+            },
+            &mut db,
+        )
+        .unwrap();
 
         assert_eq!(
             db.rooms.find_one(doc! {"id": "someroom"}).unwrap().unwrap(),
             room
         );
 
-        assert_eq!(
-            run(
-                CommandRequest::Delete {
-                    room_id: "someroom".into()
-                },
-                true
-            ),
-            0
-        );
+        run_option(
+            CommandRequest::Delete {
+                room_id: "someroom".into(),
+            },
+            &mut db,
+        )
+        .unwrap();
 
         assert_eq!(db.rooms.find_one(doc! {"id": "someroom"}).unwrap(), None);
     }
 
     #[test]
     fn local_data_update() {
-        let db = DbRepo::memory_init().unwrap();
+        let mut db = db_init(None).unwrap();
 
-        let local_data = LocalData {
+        let _local_data = LocalData {
             addr: "127.0.0.1:12345".into(),
-            username: "randomizedusername".into(),
+            username: "*".into(),
             color: Color::White,
             remember_passwords: false,
             light_mode: false,
         };
 
-        assert_eq!(run(CommandRequest::Invalid, true), 1);
+        assert!(run_option(CommandRequest::Invalid, &mut db).is_err());
 
         let local_data_from_db = db.local_data.find_one(None).unwrap().unwrap();
 

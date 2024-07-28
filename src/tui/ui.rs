@@ -1,4 +1,4 @@
-use crate::tui::chat_app::ChatApp;
+use crate::{schema::Message, tui::chat_app::ChatApp, util::systime_to_string};
 use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -34,7 +34,7 @@ impl<B: Backend> Tui<B> {
         Ok(())
     }
 
-    fn render(app: &mut ChatApp, frame: &mut Frame) {
+    pub fn render(app: &mut ChatApp, frame: &mut Frame) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints(vec![
@@ -47,7 +47,7 @@ impl<B: Backend> Tui<B> {
         let mut msgs_list = List::new(app.messages.items.clone())
             .block(
                 Block::default()
-                    .title(app.room_id.clone())
+                    .title(app.client.room.id.clone())
                     .borders(Borders::ALL)
                     .padding(Padding::new(2, 2, 1, 1))
                     .border_set(border::ROUNDED),
@@ -70,6 +70,7 @@ impl<B: Backend> Tui<B> {
                     height: 5,
                 })
                 .style(app.style.block_style)
+                .border_set(border::ROUNDED)
                 .title("help");
                 frame.render_widget(&help_popup, frame.size());
             }
@@ -85,6 +86,7 @@ impl<B: Backend> Tui<B> {
                     height: 5,
                 })
                 .style(app.style.block_style)
+                .border_set(border::ROUNDED)
                 .title("users list");
                 frame.render_widget(&user_list_popup, frame.size());
             }
@@ -97,7 +99,8 @@ impl<B: Backend> Tui<B> {
                     Text::from(format!("{} has been banned!", app.last_banned_user))
                         .style(app.style.font_style),
                 )
-                .style(app.style.block_style);
+                .style(app.style.block_style)
+                .border_set(border::ROUNDED);
                 frame.render_widget(&banned_user_popup, frame.size());
             }
             PopupState::None => {}
@@ -179,11 +182,11 @@ impl<'a> StatefulArea<'a> {
         }
     }
 
-    pub fn get_msg(&mut self) -> Option<MessageItem<'a>> {
+    pub fn get_text(&mut self) -> Option<String> {
         let buffer = self.get_buffer();
         self.clear_buffer();
         if let Some(buf) = buffer {
-            return Some(MessageItem::new("me".into(), buf));
+            return Some(buf);
         }
         None
     }
@@ -235,6 +238,10 @@ impl<T> Default for StatefulList<T> {
 }
 
 impl<T> StatefulList<T> {
+    pub fn select_last(&mut self) {
+        self.state.select(Some(self.items.len()));
+    }
+
     pub fn next(&mut self) {
         let len = self.items.len();
         if len != 0 {
@@ -272,24 +279,20 @@ impl<T> StatefulList<T> {
 #[derive(Debug)]
 pub struct MessageItem<'a>(pub Text<'a>);
 
-impl<'a> MessageItem<'a> {
-    pub fn new(sender_id: String, content: String) -> Self {
-        Self {
-            0: MessageItem::format_text(sender_id, content),
-        }
-    }
-
-    fn format_text(sender_id: String, content: String) -> Text<'a> {
-        let name = Line::from(sender_id.clone()).bold();
-        let mut content = highlight_text(content, r"@(\w+)", Style::new().bg(Color::LightBlue));
-        let mut text = Text::from(name);
+impl<'a> From<Message> for MessageItem<'a> {
+    fn from(value: Message) -> Self {
+        let mut text = Text::from(Line::from(vec![
+            Span::from(value.sender_id),
+            Span::from(format!(" [{}]", systime_to_string(value.timestamp)))
+                .gray()
+                .italic(),
+        ]));
+        let content = highlight_text(value.content, r"@(\w+)", Style::new().bg(Color::LightBlue));
         content
             .lines
             .iter()
-            .for_each(|line| text.push_line(line.clone().italic()));
-        content.push_line(Line::from("\n"));
-
-        return text;
+            .for_each(|line| text.push_line(line.clone()));
+        Self(text.style(Style::new().fg(value.sender_color.into())))
     }
 }
 
@@ -357,6 +360,3 @@ pub enum PopupState {
     Banned,
     None,
 }
-
-#[cfg(test)]
-mod test {}

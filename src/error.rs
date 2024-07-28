@@ -6,6 +6,8 @@ use thiserror::Error;
 pub enum AppError {
     #[error("{0}")]
     PdbError(pdbError),
+    #[error("{0}")]
+    IoError(ioError),
     #[error("This id already exists.")]
     AlreadyExistingId,
     #[error("Data not found in database.")]
@@ -16,4 +18,6 @@ pub enum AppError {
     NotExistingId,
     #[error("There is no any room yet")]
     NoAnyRoom,
+    #[error("Invalid command.")]
+    InvalidCommand,
 }

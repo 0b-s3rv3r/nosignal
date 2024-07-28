@@ -1,4 +1,6 @@
 use crate::network::client::ChatClient;
+use crate::network::ChatMessage;
+use crate::schema::Message;
 use crate::tui::ui::{
     MessageItem, PopupState, StatefulArea, StatefulList, Timer, Tui, WidgetStyle,
 };
@@ -6,13 +8,12 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{prelude::*, style::Style};
 use regex::Regex;
 use std::io;
+use std::time::SystemTime;
 use tokio::time::Duration;
-use tokio_tungstenite::tungstenite::Message;
 use tui_textarea::CursorMove;
 
 #[derive(Debug)]
 pub struct ChatApp<'a> {
-    pub room_id: String,
     pub style: WidgetStyle,
     pub messages: StatefulList<Text<'a>>,
     pub msg_area: StatefulArea<'a>,
@@ -38,7 +39,6 @@ impl<'a> ChatApp<'a> {
         )];
 
         Self {
-            room_id: String::from("someroom"),
             style: style.clone(),
             messages: StatefulList::default(),
             msg_area: StatefulArea::new(style),
@@ -107,15 +107,7 @@ impl<'a> ChatApp<'a> {
                         self.running = false;
                     }
                     KeyCode::Enter => {
-                        self.msg_area.height = 0;
-                        if let Some(msg) = self.msg_area.get_msg() {
-                            if !self.handle_commands(&msg.0.to_string()) {
-                                self.messages.items.push(msg.0.clone());
-                                let message = msg.0.to_string();
-                                self.client.send(Message::Text(message)).await.unwrap();
-                                self.messages.state.select(Some(self.messages.items.len()));
-                            }
-                        }
+                        self.handle_text_buffer().await;
                     }
                     KeyCode::Char('l') if modifiers.contains(KeyModifiers::CONTROL) => {
                         self.current_popup = PopupState::List;
@@ -137,13 +129,41 @@ impl<'a> ChatApp<'a> {
                         self.msg_area.on_input_update(key_event.into());
                     }
                 },
-                _ => {}
+                _ => (),
             }
         }
         Ok(())
     }
 
-    fn handle_commands(&mut self, msg: &str) -> bool {
+    async fn handle_text_buffer(&mut self) {
+        self.msg_area.height = 0;
+
+        if let Some(text) = self.msg_area.get_text() {
+            if !self.handle_commands(&text).await {
+                let msg = Message {
+                    msg_id: 0,
+                    sender_id: self.client.user.id.clone(),
+                    sender_color: self.client.user.color.clone(),
+                    chatroom_id: self.client.room.id.clone(),
+                    content: text,
+                    timestamp: SystemTime::now(),
+                };
+
+                self.client
+                    .send(&ChatMessage::Normal {
+                        msg: msg.clone(),
+                        passwd: self.client.room.passwd.clone(),
+                    })
+                    .await
+                    .unwrap();
+
+                self.messages.items.push(MessageItem::from(msg).0);
+                self.messages.select_last();
+            }
+        }
+    }
+
+    async fn handle_commands(&mut self, msg: &str) -> bool {
         if let Some((event, capture)) = (|| {
             for command in self.commands.iter() {
                 if let Some(captures) = command.0.captures(msg) {
@@ -154,9 +174,25 @@ impl<'a> ChatApp<'a> {
         })() {
             match event {
                 CommandEvent::BannedUser => {
-                    self.last_banned_user = capture;
-                    self.current_popup = PopupState::Banned;
-                    self.popup_display_timer.unlock();
+                    if let Some(user) = self
+                        .client
+                        .users
+                        .iter()
+                        .filter(|user| user.id == capture)
+                        .next()
+                    {
+                        self.client
+                            .send(&ChatMessage::Ban {
+                                addr: user.addr.unwrap(),
+                                passwd: self.client.room.passwd.clone(),
+                            })
+                            .await
+                            .unwrap();
+                        self.last_banned_user = capture;
+                        self.current_popup = PopupState::Banned;
+                        self.popup_display_timer.unlock();
+                    }
+                    return false;
                 }
                 CommandEvent::SetOption => (),
             }
@@ -167,9 +203,33 @@ impl<'a> ChatApp<'a> {
 
     async fn receive_msg(&mut self) {
         if let Some(msg) = self.client.receive().await {
-            let message = MessageItem::new("someone".into(), msg.to_string());
-            self.messages.items.push(message.0);
-            self.messages.state.select(Some(self.messages.items.len()));
+            match msg {
+                ChatMessage::Normal { msg, .. } => {
+                    self.messages.items.push(MessageItem::from(msg).0);
+                    self.messages.state.select(Some(self.messages.items.len()));
+                }
+                ChatMessage::Ban { addr, .. } => {
+                    if let Some(user) = self
+                        .client
+                        .users
+                        .iter()
+                        .filter(|user| user.addr.unwrap() == addr)
+                        .next()
+                    {
+                        self.last_banned_user = user.id.clone();
+                        self.current_popup = PopupState::Banned;
+                    }
+                }
+                ChatMessage::UserJoined { user, .. } => {
+                    todo!("change search_pattern of textarea when new user joined")
+                }
+                ChatMessage::UserLeft { user_id } => {
+                    todo!("change search_pattern of textarea when new user joined")
+                }
+                ChatMessage::ServerShutdown => {}
+                ChatMessage::AuthFailure_ => {}
+                _ => (),
+            }
         }
     }
 

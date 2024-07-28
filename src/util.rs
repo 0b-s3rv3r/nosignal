@@ -1,14 +1,18 @@
 use argon2::{password_hash::Salt, Argon2, PasswordHasher};
+use chrono::{DateTime, Utc};
+use dirs::data_dir;
 use fern::Dispatch;
-use humantime;
-use std::fs;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use humantime::format_rfc3339_seconds;
+use std::{
+    fs::create_dir_all,
+    io::{self, Write},
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 use uuid::Uuid;
 
 pub fn get_unique_id() -> String {
-    Uuid::new_v4().to_string()
+    format!("user{}", Uuid::new_v4())
 }
 
 pub fn passwd_input() -> String {
@@ -30,8 +34,8 @@ pub fn hash_passwd(passwd: &str) -> String {
         .to_string()
 }
 
-pub fn create_env_dir(dir_name: &str) -> Result<PathBuf, std::io::Error> {
-    let data_dir = match dirs::data_dir() {
+pub fn create_env_dir(dir_name: &str) -> Result<PathBuf, io::Error> {
+    let data_dir = match data_dir() {
         Some(dir) => dir,
         None => {
             return Err(std::io::Error::new(
@@ -44,7 +48,7 @@ pub fn create_env_dir(dir_name: &str) -> Result<PathBuf, std::io::Error> {
     let dir_path = data_dir.join(dir_name);
 
     if !dir_path.exists() {
-        fs::create_dir_all(&dir_path)?;
+        create_dir_all(&dir_path)?;
     }
 
     Ok(dir_path)
@@ -55,7 +59,7 @@ pub fn setup_logger(log_path: &Path) -> Result<(), fern::InitError> {
         .format(|out, message, record| {
             out.finish(format_args!(
                 "[{} {} {}] {}",
-                humantime::format_rfc3339_seconds(SystemTime::now()),
+                format_rfc3339_seconds(SystemTime::now()),
                 record.level(),
                 record.target(),
                 message
@@ -67,4 +71,10 @@ pub fn setup_logger(log_path: &Path) -> Result<(), fern::InitError> {
         .apply()?;
 
     Ok(())
+}
+
+pub fn systime_to_string(time: SystemTime) -> String {
+    DateTime::<Utc>::from(time)
+        .format("%Y-%m-%d %H:%M")
+        .to_string()
 }
