@@ -1,11 +1,15 @@
 use super::ChatMessage;
-use crate::{schema::Room, util::hash_passwd};
+use crate::{
+    db::DbRepo,
+    schema::{Message as kMessage, Room},
+    util::hash_passwd,
+};
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::{future, pin_mut, stream::TryStreamExt, StreamExt};
 use log::debug;
 use std::{
     collections::HashMap,
-    io::{self},
+    io,
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
@@ -17,15 +21,16 @@ use tokio_tungstenite::{
 type Tx = UnboundedSender<Message>;
 type PeerMap = Arc<Mutex<HashMap<SocketAddr, Tx>>>;
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct ChatServer {
     peer_map: PeerMap,
     listener: TcpListener,
     room: Room,
+    db: Arc<Mutex<DbRepo>>,
 }
 
 impl ChatServer {
-    pub async fn new(room: Room) -> io::Result<Self> {
+    pub async fn new(db: Arc<Mutex<DbRepo>>, room: Room) -> io::Result<Self> {
         let listener = TcpListener::bind(&room.addr).await?;
         debug!("Listening on {}", room.addr);
 
@@ -33,6 +38,7 @@ impl ChatServer {
             peer_map: PeerMap::new(Mutex::new(HashMap::new())),
             listener,
             room,
+            db,
         })
     }
 
@@ -43,6 +49,7 @@ impl ChatServer {
                 stream,
                 addr,
                 self.room.clone(),
+                self.db.clone(),
             ));
         }
 
@@ -54,6 +61,7 @@ impl ChatServer {
         raw_stream: TcpStream,
         addr: SocketAddr,
         room: Room,
+        db: Arc<Mutex<DbRepo>>,
     ) -> Result<(), TtError> {
         let ws_stream = accept_async(raw_stream).await?;
         debug!("Connection established with {addr}");
@@ -67,7 +75,13 @@ impl ChatServer {
         let broadcast_incoming = incoming.try_for_each(|msg| {
             debug!("{} from {}", msg.to_text().unwrap(), addr);
 
-            Self::handle_message(&ChatMessage::from(msg), peer_map.clone(), addr, &mut room);
+            Self::handle_message(
+                &ChatMessage::from(msg),
+                peer_map.clone(),
+                addr,
+                &mut room,
+                db.clone(),
+            );
 
             future::ok(())
         });
@@ -107,9 +121,10 @@ impl ChatServer {
         peer_map: PeerMap,
         self_addr: SocketAddr,
         room: &mut Room,
+        db: Arc<Mutex<DbRepo>>,
     ) {
         match msg {
-            ChatMessage::Normal { msg: _, passwd } => {
+            ChatMessage::Normal { msg: msg_, passwd } => {
                 if let Some(passwd_) = passwd {
                     if !Self::check_password(passwd_, room) {
                         Self::send_to_one(
@@ -122,6 +137,7 @@ impl ChatServer {
                 }
 
                 Self::send_to_all(Message::Text(msg.to_string()), peer_map, self_addr);
+                db.lock().unwrap().messages.insert_one(msg_).unwrap();
             }
             ChatMessage::Ban { addr, passwd } => {
                 if let Some(passwd_) = passwd {
@@ -169,7 +185,20 @@ impl ChatServer {
                         return;
                     }
                 }
-                todo!("add fetching from db")
+                let messages = db
+                    .lock()
+                    .unwrap()
+                    .messages
+                    .find(None)
+                    .unwrap()
+                    .into_iter()
+                    .map(|msg| msg.unwrap())
+                    .collect::<Vec<kMessage>>();
+                Self::send_to_one(
+                    Message::Text(ChatMessage::FetchMessages { messages }.to_string()),
+                    peer_map,
+                    self_addr,
+                );
             }
             _ => (),
         }

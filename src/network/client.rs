@@ -15,10 +15,11 @@ pub struct ChatClient {
     pub user: User,
     pub room: Room,
     pub users: Vec<User>,
+    pub owner: bool,
 }
 
 impl ChatClient {
-    pub async fn connect(room: Room, user: &User) -> Result<Self, Error> {
+    pub async fn connect(room: Room, user: &User, as_owner: bool) -> Result<Self, Error> {
         let (ws_stream, _) = connect_async(format!("ws://{}/", room.addr)).await?;
         let (write, read) = ws_stream.split();
 
@@ -51,6 +52,13 @@ impl ChatClient {
                     }
                 }
             }
+
+            // tx.send(Message::text(
+            //     ChatMessage::UserLeft {
+            //         user_id: user.id.clone(),
+            //     }
+            //     .to_string(),
+            // ));
         });
 
         task::spawn(async move {
@@ -69,6 +77,7 @@ impl ChatClient {
             user: user.clone(),
             room,
             users: vec![user.clone()],
+            owner: as_owner,
         })
     }
 
@@ -100,6 +109,7 @@ impl ChatClient {
                 }
                 .to_string(),
             ))
-            .await;
+            .await
+            .unwrap();
     }
 }

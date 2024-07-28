@@ -61,7 +61,7 @@ impl<B: Backend> Tui<B> {
         frame.render_stateful_widget(msgs_list, layout[0], &mut app.messages.state);
         frame.render_widget(app.msg_area.textarea.widget(), layout[1]);
 
-        match app.current_popup {
+        match app.current_popup.clone() {
             PopupState::Help => {
                 let popup_content = Paragraph::new(Text::from(HELP_POPUP_CONTENT));
                 let help_popup = Popup::new(SizedWrapper {
@@ -90,18 +90,31 @@ impl<B: Backend> Tui<B> {
                 .title("users list");
                 frame.render_widget(&user_list_popup, frame.size());
             }
-            PopupState::Banned => {
+            PopupState::Banned(user) => {
                 if app.popup_display_timer.has_time_passed() {
                     app.current_popup = PopupState::None
                 }
 
                 let banned_user_popup = Popup::new(
-                    Text::from(format!("{} has been banned!", app.last_banned_user))
-                        .style(app.style.font_style),
+                    Text::from(format!("{} has been banned!", user)).style(app.style.font_style),
                 )
                 .style(app.style.block_style)
                 .border_set(border::ROUNDED);
                 frame.render_widget(&banned_user_popup, frame.size());
+            }
+            PopupState::JoinedLeft(user, joined_or_left) => {
+                if app.popup_display_timer.has_time_passed() {
+                    app.current_popup = PopupState::None;
+                }
+
+                let joinedleft_popup = Popup::new(Text::from(if joined_or_left {
+                    format!("{} has joined", user)
+                } else {
+                    format!("{} has left", user)
+                }))
+                .style(app.style.block_style)
+                .border_set(border::ROUNDED);
+                frame.render_widget(&joinedleft_popup, frame.size());
             }
             PopupState::None => {}
         }
@@ -142,7 +155,8 @@ impl<'a> StatefulArea<'a> {
                 .padding(Padding::new(2, 2, 1, 1))
                 .border_set(border::ROUNDED),
         );
-        _ = textarea.set_search_pattern(r"@\w+");
+        textarea.set_search_pattern(r"@\w+").unwrap();
+        textarea.set_search_style(Style::new().fg(Color::White).bg(Color::Black).bold());
         textarea.set_placeholder_text("Start typing...");
         textarea.set_placeholder_style(Style::new().fg(Color::Gray));
 
@@ -282,16 +296,21 @@ pub struct MessageItem<'a>(pub Text<'a>);
 impl<'a> From<Message> for MessageItem<'a> {
     fn from(value: Message) -> Self {
         let mut text = Text::from(Line::from(vec![
-            Span::from(value.sender_id),
-            Span::from(format!(" [{}]", systime_to_string(value.timestamp)))
-                .gray()
+            Span::from(value.sender_id).bold(),
+            Span::from(format!(" {}", systime_to_string(value.timestamp)))
+                .fg(Color::Rgb(50, 50, 50))
                 .italic(),
         ]));
-        let content = highlight_text(value.content, r"@(\w+)", Style::new().bg(Color::LightBlue));
+        let content = highlight_text(
+            value.content,
+            r"@(\w+)",
+            Style::new().bg(Color::White).fg(Color::Black).bold(),
+        );
         content
             .lines
             .iter()
             .for_each(|line| text.push_line(line.clone()));
+        text.push_line("");
         Self(text.style(Style::new().fg(value.sender_color.into())))
     }
 }
@@ -353,10 +372,11 @@ impl WidgetStyle {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum PopupState {
     Help,
     List,
-    Banned,
+    Banned(String),
+    JoinedLeft(String, bool),
     None,
 }

@@ -19,7 +19,6 @@ pub struct ChatApp<'a> {
     pub msg_area: StatefulArea<'a>,
     pub current_popup: PopupState,
     pub users: Vec<String>,
-    pub last_banned_user: String,
     pub commands: Vec<(Regex, CommandEvent)>,
     pub popup_display_timer: Timer,
     pub running: bool,
@@ -29,8 +28,8 @@ pub struct ChatApp<'a> {
 impl<'a> ChatApp<'a> {
     pub fn new(client: ChatClient) -> Self {
         let style = WidgetStyle::new(
-            Style::new().bg(Color::Black).fg(Color::White),
-            Style::new().bg(Color::Black).fg(Color::White),
+            Style::new().bg(Color::Rgb(0, 0, 0)).fg(Color::White),
+            Style::new().bg(Color::Rgb(0, 0, 0)).fg(Color::White),
         );
 
         let commands = vec![(
@@ -44,7 +43,6 @@ impl<'a> ChatApp<'a> {
             msg_area: StatefulArea::new(style),
             current_popup: PopupState::None,
             users: vec!["me".to_string()],
-            last_banned_user: String::from(""),
             commands,
             popup_display_timer: Timer::new(100),
             running: true,
@@ -53,6 +51,12 @@ impl<'a> ChatApp<'a> {
     }
 
     pub async fn run(&mut self) -> io::Result<()> {
+        if !self.client.owner {
+            self.client.messages_request().await;
+            self.receive_msg().await;
+            self.messages.select_last();
+        }
+
         let terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
         let mut tui = Tui::new(terminal);
         tui.term_init()?;
@@ -188,8 +192,7 @@ impl<'a> ChatApp<'a> {
                             })
                             .await
                             .unwrap();
-                        self.last_banned_user = capture;
-                        self.current_popup = PopupState::Banned;
+                        self.current_popup = PopupState::Banned(capture);
                         self.popup_display_timer.unlock();
                     }
                     return false;
@@ -216,18 +219,38 @@ impl<'a> ChatApp<'a> {
                         .filter(|user| user.addr.unwrap() == addr)
                         .next()
                     {
-                        self.last_banned_user = user.id.clone();
-                        self.current_popup = PopupState::Banned;
+                        self.current_popup = PopupState::Banned(user.id.clone());
                     }
                 }
                 ChatMessage::UserJoined { user, .. } => {
-                    todo!("change search_pattern of textarea when new user joined")
+                    // todo!("change search_pattern of textarea when new user joined")
+
+                    if self.popup_display_timer.has_time_passed() {
+                        self.current_popup = PopupState::None;
+                    }
+
+                    self.current_popup = PopupState::JoinedLeft(user.id, true);
+                    self.popup_display_timer.unlock();
                 }
                 ChatMessage::UserLeft { user_id } => {
-                    todo!("change search_pattern of textarea when new user joined")
+                    // todo!("change search_pattern of textarea when new user left")
+
+                    if self.popup_display_timer.has_time_passed() {
+                        self.current_popup = PopupState::None;
+                    }
+
+                    self.current_popup = PopupState::JoinedLeft(user_id, false);
+                    self.popup_display_timer.unlock();
                 }
-                ChatMessage::ServerShutdown => {}
-                ChatMessage::AuthFailure_ => {}
+                ChatMessage::FetchMessages { messages } => {
+                    let mut messages = messages
+                        .into_iter()
+                        .map(|msg| MessageItem::from(msg).0)
+                        .collect::<Vec<Text>>();
+                    self.messages.items.append(&mut messages);
+                }
+                ChatMessage::ServerShutdown => (),
+                ChatMessage::AuthFailure_ => (),
                 _ => (),
             }
         }
