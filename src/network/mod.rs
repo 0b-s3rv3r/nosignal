@@ -1,54 +1,54 @@
 pub mod client;
 pub mod server;
 
-use crate::schema::{Color, Message};
+use crate::schema::{Color, TextMessage};
 use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_string};
 use std::{net::SocketAddr, string::ToString};
 use tokio_tungstenite::tungstenite::Message as ttMessage;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum ChatMessage {
-    Normal {
-        msg: Message,
-        passwd: Option<String>,
-    },
-    Ban {
-        addr: SocketAddr,
-        passwd: Option<String>,
-    },
-    UserJoined {
-        user: User,
-        passwd: Option<String>,
-    },
-    UserLeft {
-        user_id: String,
-    },
-    FetchMessagesReq {
-        passwd: Option<String>,
-    },
-    FetchMessages {
-        messages: Vec<Message>,
-    },
-    ServerShutdown,
-    AuthFailure_,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Message {
+    pub msg_type: MessageType,
+    pub passwd: Option<String>,
 }
 
-impl From<ttMessage> for ChatMessage {
+#[derive(Debug, Serialize, Deserialize)]
+pub enum MessageType {
+    User(UserMsg),
+    Server(ServerMsg),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum UserMsg {
+    Normal { msg: TextMessage },
+    Ban { addr: SocketAddr },
+    UserJoined { user: User },
+    FetchMessagesReq,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum ServerMsg {
+    AuthFailure,
+    MessagesFetch { messages: Vec<TextMessage> },
+    UserLeft { addr: SocketAddr },
+}
+
+impl From<ttMessage> for Message {
     fn from(value: ttMessage) -> Self {
         from_str(&value.to_string()).unwrap()
     }
 }
 
-impl ToString for ChatMessage {
-    fn to_string(&self) -> String {
-        to_string(self).unwrap()
+impl Message {
+    pub fn to_ttmessage(&self) -> ttMessage {
+        ttMessage::text(to_string(self).unwrap())
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
-    pub id: String,
+    pub _id: String,
     pub addr: Option<SocketAddr>,
     pub color: Color,
 }

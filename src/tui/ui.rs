@@ -1,4 +1,4 @@
-use crate::{schema::Message, tui::chat_app::ChatApp, util::systime_to_string};
+use crate::{schema::TextMessage, tui::chat_app::ChatApp, util::systime_to_string};
 use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -47,7 +47,7 @@ impl<B: Backend> Tui<B> {
         let mut msgs_list = List::new(app.messages.items.clone())
             .block(
                 Block::default()
-                    .title(app.client.room.id.clone())
+                    .title(app.client.room._id.clone())
                     .borders(Borders::ALL)
                     .padding(Padding::new(2, 2, 1, 1))
                     .border_set(border::ROUNDED),
@@ -77,9 +77,17 @@ impl<B: Backend> Tui<B> {
             PopupState::List => {
                 let user_list_popup = Popup::new(SizedWrapper {
                     inner: Paragraph::new(
-                        app.users
+                        app.client
+                            .users
                             .iter()
-                            .map(|user| Line::from(user.clone()).style(app.style.font_style))
+                            .map(|user| {
+                                Line::from(format!(
+                                    "{} [{}]",
+                                    user._id,
+                                    user.addr.unwrap().ip().to_string()
+                                ))
+                                .style(app.style.font_style)
+                            })
                             .collect::<Text>(),
                     ),
                     width: 21,
@@ -90,33 +98,7 @@ impl<B: Backend> Tui<B> {
                 .title("users list");
                 frame.render_widget(&user_list_popup, frame.size());
             }
-            PopupState::Banned(user) => {
-                if app.popup_display_timer.has_time_passed() {
-                    app.current_popup = PopupState::None
-                }
-
-                let banned_user_popup = Popup::new(
-                    Text::from(format!("{} has been banned!", user)).style(app.style.font_style),
-                )
-                .style(app.style.block_style)
-                .border_set(border::ROUNDED);
-                frame.render_widget(&banned_user_popup, frame.size());
-            }
-            PopupState::JoinedLeft(user, joined_or_left) => {
-                if app.popup_display_timer.has_time_passed() {
-                    app.current_popup = PopupState::None;
-                }
-
-                let joinedleft_popup = Popup::new(Text::from(if joined_or_left {
-                    format!("{} has joined", user)
-                } else {
-                    format!("{} has left", user)
-                }))
-                .style(app.style.block_style)
-                .border_set(border::ROUNDED);
-                frame.render_widget(&joinedleft_popup, frame.size());
-            }
-            PopupState::None => {}
+            _ => (),
         }
     }
 
@@ -156,7 +138,7 @@ impl<'a> StatefulArea<'a> {
                 .border_set(border::ROUNDED),
         );
         textarea.set_search_pattern(r"@\w+").unwrap();
-        textarea.set_search_style(Style::new().fg(Color::White).bg(Color::Black).bold());
+        textarea.set_search_style(Style::new().fg(Color::Rgb(0, 0, 0)).bg(Color::White).bold());
         textarea.set_placeholder_text("Start typing...");
         textarea.set_placeholder_style(Style::new().fg(Color::Gray));
 
@@ -293,16 +275,16 @@ impl<T> StatefulList<T> {
 #[derive(Debug)]
 pub struct MessageItem<'a>(pub Text<'a>);
 
-impl<'a> From<Message> for MessageItem<'a> {
-    fn from(value: Message) -> Self {
+impl<'a> From<TextMessage> for MessageItem<'a> {
+    fn from(value: TextMessage) -> Self {
         let mut text = Text::from(Line::from(vec![
-            Span::from(value.sender_id).bold(),
-            Span::from(format!(" {}", systime_to_string(value.timestamp)))
+            Span::from(value.sender_addr().ip().to_string()).bold(),
+            Span::from(format!(" {}", systime_to_string(*value.timestamp())))
                 .fg(Color::Rgb(50, 50, 50))
                 .italic(),
         ]));
         let content = highlight_text(
-            value.content,
+            value.content().into(),
             r"@(\w+)",
             Style::new().bg(Color::White).fg(Color::Black).bold(),
         );
@@ -311,49 +293,7 @@ impl<'a> From<Message> for MessageItem<'a> {
             .iter()
             .for_each(|line| text.push_line(line.clone()));
         text.push_line("");
-        Self(text.style(Style::new().fg(value.sender_color.into())))
-    }
-}
-
-#[derive(Debug)]
-pub struct Timer {
-    treshold_time: usize,
-    counter: usize,
-    start: bool,
-}
-
-impl Timer {
-    pub fn new(treshold_time: usize) -> Self {
-        Self {
-            treshold_time,
-            counter: 0,
-            start: false,
-        }
-    }
-
-    pub fn unlock(&mut self) {
-        self.start = true;
-    }
-
-    pub fn lock(&mut self) {
-        self.start = false;
-    }
-
-    pub fn dec(&mut self) {
-        if self.start {
-            if self.counter <= 0 {
-                self.counter = self.treshold_time;
-            }
-
-            self.counter -= 1;
-        }
-    }
-
-    pub fn has_time_passed(&self) -> bool {
-        if self.counter > 0 {
-            return false;
-        }
-        true
+        Self(text.style(Style::new().fg(value.sender_color().into())))
     }
 }
 
@@ -376,7 +316,5 @@ impl WidgetStyle {
 pub enum PopupState {
     Help,
     List,
-    Banned(String),
-    JoinedLeft(String, bool),
     None,
 }

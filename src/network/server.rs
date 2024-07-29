@@ -1,9 +1,5 @@
-use super::ChatMessage;
-use crate::{
-    db::DbRepo,
-    schema::{Message as kMessage, Room},
-    util::hash_passwd,
-};
+use super::{Message, MessageType, ServerMsg};
+use crate::{db::DbRepo, schema::Room, util::hash_passwd};
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::{future, pin_mut, stream::TryStreamExt, StreamExt};
 use log::debug;
@@ -15,10 +11,10 @@ use std::{
 };
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{
-    accept_async, tungstenite::protocol::Message, tungstenite::Error as TtError,
+    accept_async, tungstenite::protocol::Message as ttMessage, tungstenite::Error as TtError,
 };
 
-type Tx = UnboundedSender<Message>;
+type Tx = UnboundedSender<ttMessage>;
 type PeerMap = Arc<Mutex<HashMap<SocketAddr, Tx>>>;
 
 // #[derive(Debug)]
@@ -76,7 +72,7 @@ impl ChatServer {
             debug!("{} from {}", msg.to_text().unwrap(), addr);
 
             Self::handle_message(
-                &ChatMessage::from(msg),
+                &Message::from(msg),
                 peer_map.clone(),
                 addr,
                 &mut room,
@@ -105,110 +101,41 @@ impl ChatServer {
             .map(|(_, ws_sink)| ws_sink);
 
         for recp in broadcast_recipients {
-            recp.unbounded_send(msg.clone()).unwrap();
-            debug!("{msg}");
+            recp.unbounded_send(msg.to_ttmessage()).unwrap();
         }
     }
 
     fn send_to_one(msg: Message, peer_map: PeerMap, addr: SocketAddr) {
         let peers = peer_map.lock().unwrap();
         let recp = peers.get(&addr).unwrap();
-        recp.unbounded_send(msg.clone()).unwrap();
+        recp.unbounded_send(msg.to_ttmessage()).unwrap();
     }
 
     fn handle_message(
-        msg: &ChatMessage,
+        msg: &Message,
         peer_map: PeerMap,
         self_addr: SocketAddr,
         room: &mut Room,
         db: Arc<Mutex<DbRepo>>,
     ) {
-        match msg {
-            ChatMessage::Normal { msg: msg_, passwd } => {
-                if let Some(passwd_) = passwd {
-                    if !Self::check_password(passwd_, room) {
-                        Self::send_to_one(
-                            Message::Text(ChatMessage::AuthFailure_.to_string()),
-                            peer_map,
-                            self_addr,
-                        );
-                        return;
-                    }
+        if let Some(passwd) = &room.passwd {
+            if let Some(msg_passwd) = &msg.passwd {
+                if msg_passwd != passwd {
+                    Self::send_to_one(
+                        Message {
+                            msg_type: MessageType::Server(ServerMsg::AuthFailure),
+                            passwd: None,
+                        },
+                        peer_map,
+                        self_addr,
+                    )
                 }
+            }
+        }
 
-                Self::send_to_all(Message::Text(msg.to_string()), peer_map, self_addr);
-                db.lock().unwrap().messages.insert_one(msg_).unwrap();
-            }
-            ChatMessage::Ban { addr, passwd } => {
-                if let Some(passwd_) = passwd {
-                    if !Self::check_password(passwd_, room) {
-                        Self::send_to_one(
-                            Message::Text(ChatMessage::AuthFailure_.to_string()),
-                            peer_map,
-                            self_addr,
-                        );
-                        return ();
-                    }
-                }
-                room.banned_addrs.push(*addr);
-                peer_map.lock().unwrap().remove(&addr);
-                Self::send_to_all(Message::Text(msg.to_string()), peer_map, self_addr);
-            }
-            ChatMessage::UserJoined { user: _, passwd } => {
-                if let Some(passwd_) = passwd {
-                    if !Self::check_password(passwd_, room) {
-                        Self::send_to_one(
-                            Message::Text(ChatMessage::AuthFailure_.to_string()),
-                            peer_map,
-                            self_addr,
-                        );
-                        return;
-                    }
-                }
-
-                Self::send_to_all(Message::Text(msg.to_string()), peer_map, self_addr);
-            }
-            ChatMessage::UserLeft { .. } => {
-                Self::send_to_all(Message::Text(msg.to_string()), peer_map, self_addr)
-            }
-            ChatMessage::ServerShutdown => {
-                Self::send_to_all(Message::Text(msg.to_string()), peer_map, self_addr);
-            }
-            ChatMessage::FetchMessagesReq { passwd } => {
-                if let Some(passwd_) = passwd {
-                    if !Self::check_password(passwd_, room) {
-                        Self::send_to_one(
-                            Message::Text(ChatMessage::AuthFailure_.to_string()),
-                            peer_map,
-                            self_addr,
-                        );
-                        return;
-                    }
-                }
-                let messages = db
-                    .lock()
-                    .unwrap()
-                    .messages
-                    .find(None)
-                    .unwrap()
-                    .into_iter()
-                    .map(|msg| msg.unwrap())
-                    .collect::<Vec<kMessage>>();
-                Self::send_to_one(
-                    Message::Text(ChatMessage::FetchMessages { messages }.to_string()),
-                    peer_map,
-                    self_addr,
-                );
-            }
+        match msg.msg_type {
+            MessageType::User(_) => todo!(),
             _ => (),
         }
-    }
-
-    fn check_password(passwd: &str, room: &Room) -> bool {
-        if let Some(room_pass) = &room.passwd {
-            return hash_passwd(passwd) == *room_pass;
-        }
-
-        true
     }
 }

@@ -3,6 +3,7 @@ mod db;
 mod error;
 mod network;
 mod schema;
+mod state;
 mod tui;
 mod util;
 
@@ -11,6 +12,8 @@ use db::DbRepo;
 use network::server::ChatServer;
 use network::{client::ChatClient, User};
 use schema::{Color, Room};
+use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::{env, io};
 use tui::chat_app::ChatApp;
@@ -20,21 +23,24 @@ async fn main() -> io::Result<()> {
     let t = env::args().nth(1).unwrap();
 
     let room = Room {
-        id: "firstroom".into(),
-        addr: "127.0.0.1:12345".into(),
+        _id: "firstroom".into(),
+        addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
         passwd: None,
         banned_addrs: vec![],
         is_owner: true,
     };
 
+    let mut room2 = room.clone();
+    room2.is_owner = false;
+
     let user = User {
-        id: "user1".into(),
+        _id: "user1".into(),
         addr: None,
         color: Color::LightRed,
     };
 
     let user2 = User {
-        id: "user2".into(),
+        _id: "user2".into(),
         addr: None,
         color: Color::LightGreen,
     };
@@ -51,15 +57,15 @@ async fn main() -> io::Result<()> {
                 server.run().await.unwrap();
             });
 
-            let client = ChatClient::connect(room_, &user, true).await.unwrap();
+            let client = ChatClient::connect(room_, &user).await.unwrap();
 
-            let mut app = ChatApp::new(client);
+            let mut app = ChatApp::new(client, false);
             app.run().await?;
         }
         "client" => {
-            let client = ChatClient::connect(room, &user2, false).await.unwrap();
+            let client = ChatClient::connect(room2, &user2).await.unwrap();
 
-            let mut app = ChatApp::new(client);
+            let mut app = ChatApp::new(client, false);
             app.run().await?;
         }
         _ => {}

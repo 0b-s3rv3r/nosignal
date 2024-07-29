@@ -1,71 +1,62 @@
+use super::command::{Ban, Command, Commander};
 use crate::network::client::ChatClient;
-use crate::network::ChatMessage;
-use crate::schema::Message;
-use crate::tui::ui::{
-    MessageItem, PopupState, StatefulArea, StatefulList, Timer, Tui, WidgetStyle,
-};
+use crate::network::{Message, MessageType, UserMsg};
+use crate::schema::TextMessage;
+use crate::tui::ui::{MessageItem, PopupState, StatefulArea, StatefulList, Tui, WidgetStyle};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{prelude::*, style::Style};
 use regex::Regex;
 use std::io;
-use std::time::SystemTime;
 use tokio::time::Duration;
 use tui_textarea::CursorMove;
 
-#[derive(Debug)]
 pub struct ChatApp<'a> {
-    pub style: WidgetStyle,
-    pub messages: StatefulList<Text<'a>>,
-    pub msg_area: StatefulArea<'a>,
-    pub current_popup: PopupState,
-    pub users: Vec<String>,
-    pub commands: Vec<(Regex, CommandEvent)>,
-    pub popup_display_timer: Timer,
-    pub running: bool,
-    pub client: ChatClient,
+    pub(super) running: bool,
+    pub(super) client: ChatClient,
+    pub(super) style: WidgetStyle,
+    pub(super) messages: StatefulList<Text<'a>>,
+    pub(super) commander: Commander,
+    pub(super) current_popup: PopupState,
+    pub(super) msg_area: StatefulArea<'a>,
 }
 
 impl<'a> ChatApp<'a> {
-    pub fn new(client: ChatClient) -> Self {
-        let style = WidgetStyle::new(
+    pub fn new(client: ChatClient, light_mode: bool) -> Self {
+        let mut style = WidgetStyle::new(
             Style::new().bg(Color::Rgb(0, 0, 0)).fg(Color::White),
             Style::new().bg(Color::Rgb(0, 0, 0)).fg(Color::White),
         );
 
-        let commands = vec![(
+        if light_mode {
+            style.font_style = style.font_style.reversed();
+            style.block_style = style.block_style.reversed();
+        }
+
+        let commander = Commander::new(vec![Command::new(
             Regex::new(r"/ban\s+(\S+)").unwrap(),
-            CommandEvent::BannedUser,
-        )];
+            Box::new(Ban),
+        )]);
 
         Self {
             style: style.clone(),
             messages: StatefulList::default(),
             msg_area: StatefulArea::new(style),
             current_popup: PopupState::None,
-            users: vec!["me".to_string()],
-            commands,
-            popup_display_timer: Timer::new(100),
+            commander,
             running: true,
             client,
         }
     }
 
     pub async fn run(&mut self) -> io::Result<()> {
-        if !self.client.owner {
-            self.client.messages_request().await;
-            self.receive_msg().await;
-            self.messages.select_last();
-        }
-
         let terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
         let mut tui = Tui::new(terminal);
         tui.term_init()?;
 
         while self.running {
+            self.receive_msg().await;
             tui.draw(self)?;
             self.handle_input().await?;
-            self.receive_msg().await;
-            self.handle_popup_timer();
         }
 
         tui.term_restore()?;
@@ -143,19 +134,12 @@ impl<'a> ChatApp<'a> {
         self.msg_area.height = 0;
 
         if let Some(text) = self.msg_area.get_text() {
-            if !self.handle_commands(&text).await {
-                let msg = Message {
-                    msg_id: 0,
-                    sender_id: self.client.user.id.clone(),
-                    sender_color: self.client.user.color.clone(),
-                    chatroom_id: self.client.room.id.clone(),
-                    content: text,
-                    timestamp: SystemTime::now(),
-                };
+            if !self.commander.parse(&text) {
+                let msg = TextMessage::new(&self.client.user, &self.client.room._id, &text);
 
                 self.client
-                    .send(&ChatMessage::Normal {
-                        msg: msg.clone(),
+                    .send_msg(&Message {
+                        msg_type: MessageType::User(UserMsg::Normal { msg: msg.clone() }),
                         passwd: self.client.room.passwd.clone(),
                     })
                     .await
@@ -167,99 +151,12 @@ impl<'a> ChatApp<'a> {
         }
     }
 
-    async fn handle_commands(&mut self, msg: &str) -> bool {
-        if let Some((event, capture)) = (|| {
-            for command in self.commands.iter() {
-                if let Some(captures) = command.0.captures(msg) {
-                    return Some((command.1, captures.get(1).unwrap().as_str().to_string()));
-                }
-            }
-            None
-        })() {
-            match event {
-                CommandEvent::BannedUser => {
-                    if let Some(user) = self
-                        .client
-                        .users
-                        .iter()
-                        .filter(|user| user.id == capture)
-                        .next()
-                    {
-                        self.client
-                            .send(&ChatMessage::Ban {
-                                addr: user.addr.unwrap(),
-                                passwd: self.client.room.passwd.clone(),
-                            })
-                            .await
-                            .unwrap();
-                        self.current_popup = PopupState::Banned(capture);
-                        self.popup_display_timer.unlock();
-                    }
-                    return false;
-                }
-                CommandEvent::SetOption => (),
-            }
-            return true;
-        }
-        false
-    }
-
     async fn receive_msg(&mut self) {
-        if let Some(msg) = self.client.receive().await {
-            match msg {
-                ChatMessage::Normal { msg, .. } => {
-                    self.messages.items.push(MessageItem::from(msg).0);
-                    self.messages.state.select(Some(self.messages.items.len()));
-                }
-                ChatMessage::Ban { addr, .. } => {
-                    if let Some(user) = self
-                        .client
-                        .users
-                        .iter()
-                        .filter(|user| user.addr.unwrap() == addr)
-                        .next()
-                    {
-                        self.current_popup = PopupState::Banned(user.id.clone());
-                    }
-                }
-                ChatMessage::UserJoined { user, .. } => {
-                    // todo!("change search_pattern of textarea when new user joined")
-
-                    if self.popup_display_timer.has_time_passed() {
-                        self.current_popup = PopupState::None;
-                    }
-
-                    self.current_popup = PopupState::JoinedLeft(user.id, true);
-                    self.popup_display_timer.unlock();
-                }
-                ChatMessage::UserLeft { user_id } => {
-                    // todo!("change search_pattern of textarea when new user left")
-
-                    if self.popup_display_timer.has_time_passed() {
-                        self.current_popup = PopupState::None;
-                    }
-
-                    self.current_popup = PopupState::JoinedLeft(user_id, false);
-                    self.popup_display_timer.unlock();
-                }
-                ChatMessage::FetchMessages { messages } => {
-                    let mut messages = messages
-                        .into_iter()
-                        .map(|msg| MessageItem::from(msg).0)
-                        .collect::<Vec<Text>>();
-                    self.messages.items.append(&mut messages);
-                }
-                ChatMessage::ServerShutdown => (),
-                ChatMessage::AuthFailure_ => (),
-                _ => (),
+        if let Some(msg) = self.client.recv_msg().await {
+            match msg.msg_type {
+                MessageType::User(_) => todo!(),
+                MessageType::Server(_) => todo!(),
             }
-        }
-    }
-
-    fn handle_popup_timer(&mut self) {
-        self.popup_display_timer.dec();
-        if self.popup_display_timer.has_time_passed() {
-            self.popup_display_timer.lock();
         }
     }
 
@@ -271,12 +168,6 @@ impl<'a> ChatApp<'a> {
             self.msg_area.textarea.delete_char();
         }
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum CommandEvent {
-    BannedUser,
-    SetOption,
 }
 
 #[cfg(test)]

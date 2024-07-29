@@ -7,7 +7,12 @@ use crate::{
 use clap::{Arg, ArgMatches, Command};
 use crossterm::style::Stylize;
 use polodb_core::{bson::doc, Result as pdbResult};
-use std::{env, net::Ipv4Addr, path::Path, str::FromStr};
+use std::{
+    env,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::Path,
+    str::FromStr,
+};
 
 pub fn run(cmd_req: CommandRequest, open_memory: bool) -> Result<(), AppError> {
     let path = create_env_dir("kioto").map_err(|e| AppError::IoError(e))?;
@@ -56,9 +61,9 @@ pub fn db_init(db_path: Option<&Path>) -> pdbResult<DbRepo> {
 
     if db.local_data.count_documents()? == 0 {
         db.local_data.insert_one(LocalData {
-            addr: "127.0.0.1:12345".into(),
-            username: get_unique_id(),
-            color: Color::White,
+            default_user_id: get_unique_id(),
+            default_room_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 12345),
+            default_color: Color::White,
             remember_passwords: false,
             light_mode: false,
         })?;
@@ -83,13 +88,13 @@ fn create_room(
     }
 
     let addr = match room_ip {
-        Some(ip) => ip,
+        Some(ip) => SocketAddr::from_str(&ip).unwrap(),
         None => {
             db.local_data
                 .find_one(None)
                 .map_err(|e| AppError::PdbError(e))?
                 .ok_or(AppError::DataNotFound)?
-                .addr
+                .default_room_addr
         }
     };
 
@@ -97,7 +102,7 @@ fn create_room(
 
     db.rooms
         .insert_one(&Room {
-            id: room_id.into(),
+            _id: room_id.into(),
             addr,
             passwd,
             banned_addrs: vec![],
@@ -144,7 +149,7 @@ fn list_rooms_and_local_data(db: &DbRepo) -> Result<(), AppError> {
     let mut rooms = db.rooms.find(None).map_err(|e| AppError::PdbError(e))?;
     if !rooms.any(|el| {
         let room = el.unwrap();
-        println!("{}: {}", room.id, room.addr);
+        println!("{}: {}", room._id, room.addr);
         true
     }) {
         return Err(AppError::NoAnyRoom);
@@ -328,6 +333,8 @@ fn config_clap() -> ArgMatches {
 
 #[cfg(test)]
 mod test {
+    use std::{net::SocketAddr, str::FromStr};
+
     use crate::app::{db_init, run_option};
 
     use super::{Color, CommandRequest, LocalData, Room};
@@ -338,8 +345,8 @@ mod test {
         let mut db = db_init(None).unwrap();
 
         let room_with_custom_values = Room {
-            id: "someroom".into(),
-            addr: "192.168.0.2:12345".into(),
+            _id: "someroom".into(),
+            addr: SocketAddr::from_str("192.168.0.2:12345".into()).unwrap(),
             passwd: None,
             banned_addrs: vec![],
             is_owner: true,
@@ -347,8 +354,8 @@ mod test {
 
         run_option(
             CommandRequest::Create {
-                room_id: room_with_custom_values.id.clone(),
-                ip: Some(room_with_custom_values.addr.clone()),
+                room_id: room_with_custom_values._id.clone(),
+                ip: Some(room_with_custom_values.addr.ip().to_string()),
                 password: false,
             },
             &mut db,
@@ -361,8 +368,8 @@ mod test {
         );
 
         let room_with_default_values = Room {
-            id: "anotheroom".into(),
-            addr: "127.0.0.1:12345".into(),
+            _id: "anotheroom".into(),
+            addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
             passwd: None,
             banned_addrs: vec![],
             is_owner: true,
@@ -370,7 +377,7 @@ mod test {
 
         run_option(
             CommandRequest::Create {
-                room_id: room_with_default_values.id.clone(),
+                room_id: room_with_default_values._id.clone(),
                 ip: None,
                 password: false,
             },
@@ -392,8 +399,8 @@ mod test {
         let mut db = db_init(None).unwrap();
 
         let room = Room {
-            id: "someroom".into(),
-            addr: "192.168.0.2:12345".into(),
+            _id: "someroom".into(),
+            addr: SocketAddr::from_str("192.168.0.2:12345").unwrap(),
             passwd: None,
             banned_addrs: vec![],
             is_owner: true,
@@ -401,8 +408,8 @@ mod test {
 
         run_option(
             CommandRequest::Create {
-                room_id: room.id.clone(),
-                ip: Some(room.addr.clone()),
+                room_id: room._id.clone(),
+                ip: Some(room.addr.ip().to_string()),
                 password: false,
             },
             &mut db,
@@ -430,9 +437,9 @@ mod test {
         let mut db = db_init(None).unwrap();
 
         let _local_data = LocalData {
-            addr: "127.0.0.1:12345".into(),
-            username: "*".into(),
-            color: Color::White,
+            default_user_id: "*".into(),
+            default_room_addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
+            default_color: Color::White,
             remember_passwords: false,
             light_mode: false,
         };
@@ -441,8 +448,14 @@ mod test {
 
         let local_data_from_db = db.local_data.find_one(None).unwrap().unwrap();
 
-        assert_eq!(local_data_from_db.addr, local_data_from_db.addr);
-        assert_eq!(local_data_from_db.color, local_data_from_db.color);
+        assert_eq!(
+            local_data_from_db.default_room_addr,
+            local_data_from_db.default_room_addr
+        );
+        assert_eq!(
+            local_data_from_db.default_color,
+            local_data_from_db.default_color
+        );
         assert_eq!(
             local_data_from_db.remember_passwords,
             local_data_from_db.remember_passwords
