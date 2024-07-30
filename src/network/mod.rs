@@ -16,15 +16,20 @@ pub struct Message {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MessageType {
     User(UserMsg),
+    UserReq(UserReqMsg),
     Server(ServerMsg),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum UserMsg {
     Normal { msg: TextMessage },
-    Ban { addr: SocketAddr },
     UserJoined { user: User },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum UserReqMsg {
     FetchMessagesReq,
+    BanReq { addr: SocketAddr },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -32,6 +37,7 @@ pub enum ServerMsg {
     AuthFailure,
     MessagesFetch { messages: Vec<TextMessage> },
     UserLeft { addr: SocketAddr },
+    BanConfirm { addr: SocketAddr },
 }
 
 impl From<ttMessage> for Message {

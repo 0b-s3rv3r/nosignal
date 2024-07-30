@@ -80,7 +80,7 @@ impl<B: Backend> Tui<B> {
                         app.client
                             .users
                             .iter()
-                            .map(|user| {
+                            .map(|(_, user)| {
                                 Line::from(format!(
                                     "{} [{}]",
                                     user._id,

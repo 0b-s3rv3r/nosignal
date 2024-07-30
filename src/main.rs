@@ -3,7 +3,6 @@ mod db;
 mod error;
 mod network;
 mod schema;
-mod state;
 mod tui;
 mod util;
 

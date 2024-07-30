@@ -834,7 +834,6 @@ dependencies = [
  "chrono",
  "clap",
  "crossterm",
- "derive-getters",
  "dirs",
  "enum_stringify",
  "fern",

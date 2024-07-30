@@ -21,3 +21,15 @@ pub enum AppError {
     #[error("Invalid command.")]
     InvalidCommand,
 }
+
+impl From<pdbError> for AppError {
+    fn from(value: pdbError) -> Self {
+        AppError::PdbError(value)
+    }
+}
+
+impl From<ioError> for AppError {
+    fn from(value: ioError) -> Self {
+        AppError::IoError(value)
+    }
+}

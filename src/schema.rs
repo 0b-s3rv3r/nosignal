@@ -16,9 +16,9 @@ pub struct Room {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct TextMessage {
+    room_id: String,
     sender_addr: SocketAddr,
     sender_color: Color,
-    room_id: String,
     content: String,
     timestamp: SystemTime,
 }

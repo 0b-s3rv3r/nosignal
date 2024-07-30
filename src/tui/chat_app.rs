@@ -1,6 +1,5 @@
-use super::command::{Ban, Command, Commander};
 use crate::network::client::ChatClient;
-use crate::network::{Message, MessageType, UserMsg};
+use crate::network::{Message, MessageType, UserMsg, UserReqMsg};
 use crate::schema::TextMessage;
 use crate::tui::ui::{MessageItem, PopupState, StatefulArea, StatefulList, Tui, WidgetStyle};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
@@ -15,7 +14,7 @@ pub struct ChatApp<'a> {
     pub(super) client: ChatClient,
     pub(super) style: WidgetStyle,
     pub(super) messages: StatefulList<Text<'a>>,
-    pub(super) commander: Commander,
+    pub(super) commands: Vec<Command>,
     pub(super) current_popup: PopupState,
     pub(super) msg_area: StatefulArea<'a>,
 }
@@ -32,17 +31,12 @@ impl<'a> ChatApp<'a> {
             style.block_style = style.block_style.reversed();
         }
 
-        let commander = Commander::new(vec![Command::new(
-            Regex::new(r"/ban\s+(\S+)").unwrap(),
-            Box::new(Ban),
-        )]);
-
         Self {
             style: style.clone(),
             messages: StatefulList::default(),
             msg_area: StatefulArea::new(style),
             current_popup: PopupState::None,
-            commander,
+            commands: vec![(Regex::new(r"/ban\s+(\S+)").unwrap(), Action::Ban)],
             running: true,
             client,
         }
@@ -134,7 +128,7 @@ impl<'a> ChatApp<'a> {
         self.msg_area.height = 0;
 
         if let Some(text) = self.msg_area.get_text() {
-            if !self.commander.parse(&text) {
+            if !self.parse_commands(&text).await {
                 let msg = TextMessage::new(&self.client.user, &self.client.room._id, &text);
 
                 self.client
@@ -155,6 +149,7 @@ impl<'a> ChatApp<'a> {
         if let Some(msg) = self.client.recv_msg().await {
             match msg.msg_type {
                 MessageType::User(_) => todo!(),
+                MessageType::UserReq(_) => todo!(),
                 MessageType::Server(_) => todo!(),
             }
         }
@@ -168,6 +163,46 @@ impl<'a> ChatApp<'a> {
             self.msg_area.textarea.delete_char();
         }
     }
+
+    async fn parse_commands(&self, haystack: &str) -> bool {
+        for command in self.commands.iter() {
+            if let Some(args) = Self::parse_command(command, haystack) {
+                match command.1 {
+                    Action::Ban => self
+                        .client
+                        .send_msg(&Message {
+                            msg_type: MessageType::UserReq(UserReqMsg::BanReq {
+                                addr: self.client.users.get(&args[0]).unwrap().addr.unwrap(),
+                            }),
+                            passwd: self.client.room.passwd.clone(),
+                        })
+                        .await
+                        .unwrap(),
+                }
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn parse_command(command: &Command, haystack: &str) -> Option<Vec<String>> {
+        if let Some(captures) = command.0.captures(haystack) {
+            return Some(
+                captures
+                    .iter()
+                    .map(|cap| cap.unwrap().as_str().to_string())
+                    .collect::<Vec<String>>(),
+            );
+        }
+        None
+    }
+}
+
+type Command = (Regex, Action);
+
+enum Action {
+    Ban,
 }
 
 #[cfg(test)]

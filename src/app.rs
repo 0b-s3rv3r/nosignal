@@ -15,15 +15,15 @@ use std::{
 };
 
 pub fn run(cmd_req: CommandRequest, open_memory: bool) -> Result<(), AppError> {
-    let path = create_env_dir("kioto").map_err(|e| AppError::IoError(e))?;
+    let path = create_env_dir("kioto")?;
 
     let log_path = path.join("errors.log");
     setup_logger(&log_path).expect(format!("{}", "Failed to set up logger.".red()).as_str());
 
     let mut db = if open_memory {
-        db_init(None).map_err(|e| AppError::PdbError(e))?
+        db_init(None)?
     } else {
-        db_init(Some(&path)).map_err(|e| AppError::PdbError(e))?
+        db_init(Some(&path))?
     };
 
     run_option(cmd_req, &mut db)?;
@@ -78,12 +78,7 @@ fn create_room(
     room_ip: Option<String>,
     password: bool,
 ) -> Result<(), AppError> {
-    if db
-        .rooms
-        .find_one(doc! {"id": room_id})
-        .map_err(|e| AppError::PdbError(e))?
-        .is_some()
-    {
+    if db.rooms.find_one(doc! {"id": room_id})?.is_some() {
         return Err(AppError::AlreadyExistingId);
     }
 
@@ -91,8 +86,7 @@ fn create_room(
         Some(ip) => SocketAddr::from_str(&ip).unwrap(),
         None => {
             db.local_data
-                .find_one(None)
-                .map_err(|e| AppError::PdbError(e))?
+                .find_one(None)?
                 .ok_or(AppError::DataNotFound)?
                 .default_room_addr
         }
@@ -100,25 +94,19 @@ fn create_room(
 
     let passwd = if password { Some(passwd_input()) } else { None };
 
-    db.rooms
-        .insert_one(&Room {
-            _id: room_id.into(),
-            addr,
-            passwd,
-            banned_addrs: vec![],
-            is_owner: true,
-        })
-        .map_err(|e| AppError::PdbError(e))?;
+    db.rooms.insert_one(&Room {
+        _id: room_id.into(),
+        addr,
+        passwd,
+        banned_addrs: vec![],
+        is_owner: true,
+    })?;
 
     Ok(())
 }
 
 fn delete_room(db: &mut DbRepo, room_id: &str) -> Result<(), AppError> {
-    if let Some(room) = db
-        .rooms
-        .find_one(doc! {"room_id": room_id})
-        .map_err(|e| AppError::PdbError(e))?
-    {
+    if let Some(room) = db.rooms.find_one(doc! {"room_id": room_id})? {
         if room.is_owner {
             if let Some(passwd) = room.passwd {
                 hash_passwd(&passwd);
@@ -131,22 +119,16 @@ fn delete_room(db: &mut DbRepo, room_id: &str) -> Result<(), AppError> {
         return Err(AppError::NotExistingId);
     }
 
-    db.rooms
-        .delete_one(doc! {"room_id": room_id})
-        .map_err(|e| AppError::PdbError(e))?;
+    db.rooms.delete_one(doc! {"room_id": room_id})?;
     Ok(())
 }
 
 fn list_rooms_and_local_data(db: &DbRepo) -> Result<(), AppError> {
-    let local_data = db
-        .rooms
-        .find_one(None)
-        .map_err(|e| AppError::PdbError(e))?
-        .ok_or(AppError::DataNotFound)?;
+    let local_data = db.rooms.find_one(None)?.ok_or(AppError::DataNotFound)?;
 
-    println!("{:?}", local_data);
+    println!("{:#?}", local_data);
 
-    let mut rooms = db.rooms.find(None).map_err(|e| AppError::PdbError(e))?;
+    let mut rooms = db.rooms.find(None)?;
     if !rooms.any(|el| {
         let room = el.unwrap();
         println!("{}: {}", room._id, room.addr);
@@ -167,12 +149,12 @@ fn join_room(
 }
 
 fn set_local_data(db: &mut DbRepo, option: &str, value: &str) -> Result<(), AppError> {
-    db.local_data
-        .update_one(
-            doc! {"option": option.to_string()},
-            doc! {"value": value.to_string()},
-        )
-        .map_err(|e| AppError::PdbError(e))?;
+    db.local_data.update_one(
+        doc! {},
+        doc! {"$set": doc! {
+            option: value
+        }},
+    )?;
 
     Ok(())
 }

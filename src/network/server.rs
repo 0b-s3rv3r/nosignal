@@ -135,6 +135,7 @@ impl ChatServer {
 
         match msg.msg_type {
             MessageType::User(_) => todo!(),
+            MessageType::UserReq(_) => todo!(),
             _ => (),
         }
     }

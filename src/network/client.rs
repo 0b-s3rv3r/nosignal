@@ -1,6 +1,7 @@
-use super::{Message, MessageType, User, UserMsg};
+use super::{Message, MessageType, User, UserMsg, UserReqMsg};
 use crate::schema::Room;
 use futures_util::{SinkExt, StreamExt};
+use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task;
@@ -14,7 +15,7 @@ pub struct ChatClient {
     receiver: Receiver<ttMessage>,
     pub user: User,
     pub room: Room,
-    pub users: Vec<User>,
+    pub users: HashMap<String, User>,
 }
 
 impl ChatClient {
@@ -37,7 +38,7 @@ impl ChatClient {
 
         tx.send(
             Message {
-                msg_type: MessageType::User(UserMsg::FetchMessagesReq),
+                msg_type: MessageType::UserReq(UserReqMsg::FetchMessagesReq),
                 passwd: room.passwd.clone(),
             }
             .to_ttmessage(),
@@ -88,7 +89,7 @@ impl ChatClient {
             receiver: rx_in,
             user: user.clone(),
             room,
-            users: vec![user.clone()],
+            users: HashMap::new(),
         })
     }
 
@@ -104,17 +105,9 @@ impl ChatClient {
         let msg = Message::from(self.receiver.recv().await.unwrap());
 
         match msg.msg_type {
-            MessageType::User(user_msg) => match user_msg {
-                super::UserMsg::Normal { msg } => todo!(),
-                super::UserMsg::Ban { addr } => todo!(),
-                super::UserMsg::UserJoined { user } => todo!(),
-                super::UserMsg::FetchMessagesReq => todo!(),
-            },
-            MessageType::Server(server_msg) => match server_msg {
-                super::ServerMsg::AuthFailure => todo!(),
-                super::ServerMsg::MessagesFetch { messages } => todo!(),
-                super::ServerMsg::UserLeft { addr } => todo!(),
-            },
+            MessageType::User(_) => todo!(),
+            MessageType::Server(_) => todo!(),
+            _ => (),
         }
 
         Some(msg)

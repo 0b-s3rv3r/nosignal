@@ -1,7 +1,5 @@
 use crate::schema::{LocalData, Room, TextMessage};
-// use bson::doc;
 use polodb_core::{Collection, Database, Result as pdbResult};
-// use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub struct DbRepo {
@@ -34,32 +32,3 @@ impl DbRepo {
         })
     }
 }
-
-// pub struct Store<T: Serialize + for<'b> Deserialize<'b>>(Collection<T>);
-//
-// impl<T: Serialize + for<'b> Deserialize<'b>> Store<T> {
-//     pub fn init(db: &Database, name: &str) -> Self {
-//         Self(db.collection::<T>(name))
-//     }
-//
-//     pub fn get_one(&self, id: Option<String>) /* -> pdbResult<Option<T>> */ {
-//         let result = self.0.find(None).unwrap();
-//
-//         // if let Some(id_) = id {
-//         // } else {
-//        // }
-//     }
-//
-//     pub fn get_many(&self, id: Option<String>) -> pdbResult<Option<Vec<T>>> {
-//         if let Some(id_) = id {
-//             let result = self.0.find(doc! {"id": id_})?.;
-//             Ok(())
-//         } else {
-//             Ok(self.0.find(None)?)
-//         }
-//     }
-//
-//     pub fn insert(&self, lcl_data: &LocalData) -> pdbResult<()> {
-//         Ok(self.0.insert_one(lcl_data)?)
-//     }
-// }
