@@ -6,15 +6,17 @@ mod schema;
 mod tui;
 mod util;
 
+use app::{get_command_request, run};
 use db::DbRepo;
-// use app::{get_command_request, run};
 use network::server::ChatServer;
 use network::{client::ChatClient, User};
 use schema::{Color, Room};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::{env, io};
+use tokio::time::sleep;
 use tui::chat_app::ChatApp;
 
 #[tokio::main]
@@ -52,17 +54,24 @@ async fn main() -> io::Result<()> {
         "server" => {
             println!("Starting server...");
             tokio::spawn(async move {
-                let server = ChatServer::new(db, room).await.unwrap();
+                let mut server = ChatServer::new(room, db).await.unwrap();
                 server.run().await.unwrap();
             });
 
-            let client = ChatClient::connect(room_, &user).await.unwrap();
+            sleep(Duration::from_secs(1)).await;
+
+            println!("Starting client...");
+            let mut client = ChatClient::new(room_, user);
+            client.connect().await.unwrap();
+
+            sleep(Duration::from_secs(1)).await;
 
             let mut app = ChatApp::new(client, false);
             app.run().await?;
         }
         "client" => {
-            let client = ChatClient::connect(room2, &user2).await.unwrap();
+            let mut client = ChatClient::new(room2, user2);
+            client.connect().await.unwrap();
 
             let mut app = ChatApp::new(client, false);
             app.run().await?;

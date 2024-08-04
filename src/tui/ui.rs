@@ -1,4 +1,8 @@
-use crate::{schema::TextMessage, tui::chat_app::ChatApp, util::systime_to_string};
+use crate::{
+    schema::{Color as ChatColor, TextMessage},
+    tui::chat_app::ChatApp,
+    util::systime_to_string,
+};
 use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -52,10 +56,10 @@ impl<B: Backend> Tui<B> {
                     .padding(Padding::new(2, 2, 1, 1))
                     .border_set(border::ROUNDED),
             )
-            .style(app.style.block_style)
+            .style(app.style.block)
             .direction(ListDirection::TopToBottom);
         if app.messages.is_highlighted {
-            msgs_list = msgs_list.highlight_style(Style::new().fg(Color::Yellow));
+            msgs_list = msgs_list.highlight_style(app.style.msg_highlight);
         }
 
         frame.render_stateful_widget(msgs_list, layout[0], &mut app.messages.state);
@@ -69,7 +73,7 @@ impl<B: Backend> Tui<B> {
                     width: 21,
                     height: 5,
                 })
-                .style(app.style.block_style)
+                .style(app.style.block)
                 .border_set(border::ROUNDED)
                 .title("help");
                 frame.render_widget(&help_popup, frame.size());
@@ -86,14 +90,13 @@ impl<B: Backend> Tui<B> {
                                     user._id,
                                     user.addr.unwrap().ip().to_string()
                                 ))
-                                .style(app.style.font_style)
                             })
                             .collect::<Text>(),
                     ),
                     width: 21,
                     height: 5,
                 })
-                .style(app.style.block_style)
+                .style(app.style.block)
                 .border_set(border::ROUNDED)
                 .title("users list");
                 frame.render_widget(&user_list_popup, frame.size());
@@ -126,19 +129,18 @@ pub struct StatefulArea<'a> {
 impl<'a> StatefulArea<'a> {
     const MAX_AREA_HEIGHT: u16 = 20;
 
-    pub fn new(style: WidgetStyle) -> Self {
+    pub fn new(style: ChatStyle) -> Self {
         let mut textarea = TextArea::default();
-        textarea.set_style(style.font_style);
-        textarea.set_cursor_line_style(style.font_style);
+        textarea.set_cursor_line_style(style.block);
         textarea.set_block(
             Block::default()
                 .borders(Borders::ALL)
-                .set_style(style.block_style)
+                .set_style(style.block)
                 .padding(Padding::new(2, 2, 1, 1))
                 .border_set(border::ROUNDED),
         );
         textarea.set_search_pattern(r"@\w+").unwrap();
-        textarea.set_search_style(Style::new().fg(Color::Rgb(0, 0, 0)).bg(Color::White).bold());
+        textarea.set_search_style(style.mentioning);
         textarea.set_placeholder_text("Start typing...");
         textarea.set_placeholder_style(Style::new().fg(Color::Gray));
 
@@ -275,16 +277,26 @@ impl<T> StatefulList<T> {
 #[derive(Debug)]
 pub struct MessageItem<'a>(pub Text<'a>);
 
-impl<'a> From<TextMessage> for MessageItem<'a> {
-    fn from(value: TextMessage) -> Self {
+impl<'a> MessageItem<'a> {
+    pub fn new(msg: String, color: Color) -> Self {
+        let mut text = Text::from(msg);
+        text.push_line("");
+        Self(text.style(Style::new().fg(color.into())))
+    }
+}
+
+impl<'a> From<(TextMessage, ChatColor)> for MessageItem<'a> {
+    fn from(value: (TextMessage, ChatColor)) -> Self {
+        let (msg, color) = value;
+
         let mut text = Text::from(Line::from(vec![
-            Span::from(value.sender_addr().ip().to_string()).bold(),
-            Span::from(format!(" {}", systime_to_string(*value.timestamp())))
+            Span::from(msg.sender_addr().ip().to_string()).bold(),
+            Span::from(format!(" {}", systime_to_string(*msg.timestamp())))
                 .fg(Color::Rgb(50, 50, 50))
                 .italic(),
         ]));
         let content = highlight_text(
-            value.content().into(),
+            msg.content().into(),
             r"@(\w+)",
             Style::new().bg(Color::White).fg(Color::Black).bold(),
         );
@@ -293,22 +305,30 @@ impl<'a> From<TextMessage> for MessageItem<'a> {
             .iter()
             .for_each(|line| text.push_line(line.clone()));
         text.push_line("");
-        Self(text.style(Style::new().fg(value.sender_color().into())))
+        Self(text.style(Style::new().fg(color.into())))
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct WidgetStyle {
-    pub block_style: Style,
-    pub font_style: Style,
+pub struct ChatStyle {
+    pub block: Style,
+    pub msg_highlight: Style,
+    pub mentioning: Style,
 }
 
-impl WidgetStyle {
-    pub fn new(block_style: Style, font_style: Style) -> Self {
+impl ChatStyle {
+    pub fn new(block: Style, msg_highlight: Style, mentioning: Style) -> Self {
         Self {
-            block_style,
-            font_style,
+            block,
+            msg_highlight,
+            mentioning,
         }
+    }
+
+    pub fn reverse_colors(&self) {
+        self.block.reversed();
+        self.msg_highlight.reversed();
+        self.mentioning.reversed();
     }
 }
 

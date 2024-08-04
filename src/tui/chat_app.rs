@@ -1,7 +1,7 @@
 use crate::network::client::ChatClient;
-use crate::network::{Message, MessageType, UserMsg, UserReqMsg};
+use crate::network::{Message, MessageType, ServerMsg, UserMsg, UserReqMsg};
 use crate::schema::TextMessage;
-use crate::tui::ui::{MessageItem, PopupState, StatefulArea, StatefulList, Tui, WidgetStyle};
+use crate::tui::ui::{ChatStyle, MessageItem, PopupState, StatefulArea, StatefulList, Tui};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{prelude::*, style::Style};
 use regex::Regex;
@@ -10,25 +10,25 @@ use tokio::time::Duration;
 use tui_textarea::CursorMove;
 
 pub struct ChatApp<'a> {
-    pub(super) running: bool,
-    pub(super) client: ChatClient,
-    pub(super) style: WidgetStyle,
-    pub(super) messages: StatefulList<Text<'a>>,
-    pub(super) commands: Vec<Command>,
-    pub(super) current_popup: PopupState,
-    pub(super) msg_area: StatefulArea<'a>,
+    pub running: bool,
+    pub client: ChatClient,
+    pub style: ChatStyle,
+    pub messages: StatefulList<Text<'a>>,
+    pub commands: Vec<Command>,
+    pub current_popup: PopupState,
+    pub msg_area: StatefulArea<'a>,
 }
 
 impl<'a> ChatApp<'a> {
     pub fn new(client: ChatClient, light_mode: bool) -> Self {
-        let mut style = WidgetStyle::new(
+        let style = ChatStyle::new(
             Style::new().bg(Color::Rgb(0, 0, 0)).fg(Color::White),
-            Style::new().bg(Color::Rgb(0, 0, 0)).fg(Color::White),
+            Style::new().fg(Color::Yellow),
+            Style::new().fg(Color::Rgb(0, 0, 0)).bg(Color::White).bold(),
         );
 
         if light_mode {
-            style.font_style = style.font_style.reversed();
-            style.block_style = style.block_style.reversed();
+            style.reverse_colors();
         }
 
         Self {
@@ -47,6 +47,8 @@ impl<'a> ChatApp<'a> {
         let mut tui = Tui::new(terminal);
         tui.term_init()?;
 
+        self.receive_msg().await;
+
         while self.running {
             self.receive_msg().await;
             tui.draw(self)?;
@@ -61,7 +63,7 @@ impl<'a> ChatApp<'a> {
         if event::poll(Duration::from_millis(10))? {
             let key_event = event::read()?;
 
-            // this have to be fixed
+            // this has to be fixed
             if let Event::Key(_) = key_event {
                 if self.current_popup != PopupState::None {
                     self.current_popup = PopupState::None;
@@ -132,27 +134,102 @@ impl<'a> ChatApp<'a> {
                 let msg = TextMessage::new(&self.client.user, &self.client.room._id, &text);
 
                 self.client
-                    .send_msg(&Message {
+                    .send_msg(Message {
                         msg_type: MessageType::User(UserMsg::Normal { msg: msg.clone() }),
                         passwd: self.client.room.passwd.clone(),
                     })
                     .await
                     .unwrap();
 
-                self.messages.items.push(MessageItem::from(msg).0);
+                self.messages
+                    .items
+                    .push(MessageItem::from((msg, self.client.user.color.clone())).0);
                 self.messages.select_last();
             }
         }
     }
 
     async fn receive_msg(&mut self) {
-        if let Some(msg) = self.client.recv_msg().await {
-            match msg.msg_type {
-                MessageType::User(_) => todo!(),
-                MessageType::UserReq(_) => todo!(),
-                MessageType::Server(_) => todo!(),
+        if let Some(msg_type) = self.client.recv_msg().await.take() {
+            match msg_type {
+                MessageType::User(user_msg) => match user_msg {
+                    UserMsg::Normal { msg } => {
+                        let sender_addr = msg.sender_addr().clone();
+                        self.messages.items.push(
+                            MessageItem::from((
+                                msg,
+                                self.client.users.get(&sender_addr).unwrap().color.clone(),
+                            ))
+                            .0,
+                        );
+                    }
+                    UserMsg::UserJoined { user } => {
+                        self.messages.items.push(
+                            MessageItem::new(
+                                format!("{} has joined", user._id),
+                                Color::Rgb(50, 50, 50).into(),
+                            )
+                            .0,
+                        );
+                    }
+                },
+                MessageType::Server(server_msg) => match server_msg {
+                    ServerMsg::AuthFailure => panic!("Authentication failure"),
+                    ServerMsg::MessagesFetch { messages } => self.messages.items.append(
+                        &mut messages
+                            .iter()
+                            .map(|msg| {
+                                MessageItem::from((
+                                    msg.clone(),
+                                    self.client
+                                        .users
+                                        .get(msg.sender_addr())
+                                        .unwrap()
+                                        .color
+                                        .clone(),
+                                ))
+                                .0
+                            })
+                            .collect::<Vec<Text>>(),
+                    ),
+                    ServerMsg::UserLeft { addr } => {
+                        self.messages.items.push(
+                            MessageItem::new(
+                                format!("{} has left", self.client.users.get(&addr).unwrap()._id),
+                                Color::Rgb(50, 50, 50).into(),
+                            )
+                            .0,
+                        );
+                    }
+                    ServerMsg::BanConfirm { addr } => {
+                        self.messages.items.push(
+                            MessageItem::new(
+                                format!(
+                                    "{} has been banned",
+                                    self.client.users.get(&addr).unwrap()._id
+                                ),
+                                Color::Rgb(50, 50, 50).into(),
+                            )
+                            .0,
+                        );
+                    }
+                    ServerMsg::ServerShutdown => {
+                        self.client.close_connection();
+
+                        self.messages.items.push(
+                            MessageItem::new(
+                                String::from("Server has been shutted down."),
+                                Color::Rgb(50, 50, 50).into(),
+                            )
+                            .0,
+                        );
+                    }
+                },
+                _ => (),
             }
         }
+
+        self.messages.select_last();
     }
 
     fn handle_deleting_chars(&mut self) {
@@ -170,9 +247,17 @@ impl<'a> ChatApp<'a> {
                 match command.1 {
                     Action::Ban => self
                         .client
-                        .send_msg(&Message {
+                        .send_msg(Message {
                             msg_type: MessageType::UserReq(UserReqMsg::BanReq {
-                                addr: self.client.users.get(&args[0]).unwrap().addr.unwrap(),
+                                addr: self
+                                    .client
+                                    .users
+                                    .iter()
+                                    .find(|(_, user)| user._id == args[0])
+                                    .unwrap()
+                                    .1
+                                    .addr
+                                    .unwrap(),
                             }),
                             passwd: self.client.room.passwd.clone(),
                         })
@@ -201,7 +286,7 @@ impl<'a> ChatApp<'a> {
 
 type Command = (Regex, Action);
 
-enum Action {
+pub enum Action {
     Ban,
 }
 

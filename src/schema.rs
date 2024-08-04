@@ -18,7 +18,6 @@ pub struct Room {
 pub struct TextMessage {
     room_id: String,
     sender_addr: SocketAddr,
-    sender_color: Color,
     content: String,
     timestamp: SystemTime,
 }
@@ -27,7 +26,6 @@ impl TextMessage {
     pub fn new(user: &User, room_id: &str, msg: &str) -> Self {
         Self {
             sender_addr: user.addr.unwrap(),
-            sender_color: user.color.clone(),
             room_id: room_id.into(),
             content: msg.into(),
             timestamp: SystemTime::now(),
@@ -36,10 +34,6 @@ impl TextMessage {
 
     pub fn sender_addr(&self) -> &SocketAddr {
         &self.sender_addr
-    }
-
-    pub fn sender_color(&self) -> Color {
-        self.sender_color.clone()
     }
 
     pub fn room_id(&self) -> &String {
@@ -65,8 +59,8 @@ pub struct LocalData {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, EnumStringify)]
+#[enum_stringify(case = "lower")]
 pub enum Color {
-    Reset,
     Black,
     Red,
     Green,
@@ -88,7 +82,6 @@ pub enum Color {
 impl Into<ratColor> for Color {
     fn into(self) -> ratColor {
         match self {
-            Color::Reset => ratColor::Reset,
             Color::Black => ratColor::Black,
             Color::Red => ratColor::Red,
             Color::Green => ratColor::Green,
