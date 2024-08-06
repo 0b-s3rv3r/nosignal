@@ -51,7 +51,7 @@ impl<B: Backend> Tui<B> {
         let mut msgs_list = List::new(app.messages.items.clone())
             .block(
                 Block::default()
-                    .title(app.client.room._id.clone())
+                    .title(app.client.room.lock().unwrap()._id.clone())
                     .borders(Borders::ALL)
                     .padding(Padding::new(2, 2, 1, 1))
                     .border_set(border::ROUNDED),
@@ -81,8 +81,7 @@ impl<B: Backend> Tui<B> {
             PopupState::List => {
                 let user_list_popup = Popup::new(SizedWrapper {
                     inner: Paragraph::new(
-                        app.client
-                            .users
+                        app.users
                             .iter()
                             .map(|(_, user)| {
                                 Line::from(format!(
@@ -220,16 +219,16 @@ impl<'a> StatefulArea<'a> {
 
 #[derive(Debug)]
 pub struct StatefulList<T> {
-    pub state: ListState,
     pub items: Vec<T>,
+    pub state: ListState,
     pub is_highlighted: bool,
 }
 
 impl<T> Default for StatefulList<T> {
     fn default() -> Self {
         Self {
-            state: ListState::default(),
             items: Vec::new(),
+            state: ListState::default(),
             is_highlighted: false,
         }
     }
@@ -275,28 +274,24 @@ impl<T> StatefulList<T> {
 }
 
 #[derive(Debug)]
-pub struct MessageItem<'a>(pub Text<'a>);
+pub struct MsgItem;
 
-impl<'a> MessageItem<'a> {
-    pub fn new(msg: String, color: Color) -> Self {
+impl MsgItem {
+    pub fn info_msg<'a>(msg: String, color: Color) -> Text<'a> {
         let mut text = Text::from(msg);
         text.push_line("");
-        Self(text.style(Style::new().fg(color.into())))
+        text.style(Style::new().fg(color.into()).italic())
     }
-}
 
-impl<'a> From<(TextMessage, ChatColor)> for MessageItem<'a> {
-    fn from(value: (TextMessage, ChatColor)) -> Self {
-        let (msg, color) = value;
-
+    pub fn user_msg<'a>(text_msg: &TextMessage, color: ChatColor, user_id: String) -> Text<'a> {
         let mut text = Text::from(Line::from(vec![
-            Span::from(msg.sender_addr().ip().to_string()).bold(),
-            Span::from(format!(" {}", systime_to_string(*msg.timestamp())))
+            Span::from(user_id).bold(),
+            Span::from(format!(" {}", systime_to_string(*text_msg.timestamp())))
                 .fg(Color::Rgb(50, 50, 50))
                 .italic(),
         ]));
         let content = highlight_text(
-            msg.content().into(),
+            text_msg.content().into(),
             r"@(\w+)",
             Style::new().bg(Color::White).fg(Color::Black).bold(),
         );
@@ -305,7 +300,7 @@ impl<'a> From<(TextMessage, ChatColor)> for MessageItem<'a> {
             .iter()
             .for_each(|line| text.push_line(line.clone()));
         text.push_line("");
-        Self(text.style(Style::new().fg(color.into())))
+        text.style(Style::new().fg(color.into()))
     }
 }
 
@@ -325,10 +320,10 @@ impl ChatStyle {
         }
     }
 
-    pub fn reverse_colors(&self) {
-        self.block.reversed();
-        self.msg_highlight.reversed();
-        self.mentioning.reversed();
+    pub fn reverse_colors(&mut self) {
+        self.block = self.block.reversed();
+        self.msg_highlight = self.msg_highlight.reversed();
+        self.mentioning = self.mentioning.reversed();
     }
 }
 

@@ -1,4 +1,7 @@
-use super::{Message, MessageType, ServerMsg, UserMsg, UserReqMsg};
+use super::{
+    message::{Message, MessageType, ServerMsg, UserMsg, UserReqMsg},
+    User,
+};
 use crate::{
     db::DbRepo,
     schema::{Room, TextMessage},
@@ -21,7 +24,7 @@ use tokio_tungstenite::{
 };
 
 type Tx = UnboundedSender<TtMessage>;
-type PeerMap = Arc<Mutex<HashMap<SocketAddr, Tx>>>;
+type PeerMap = Arc<Mutex<HashMap<SocketAddr, (Tx, Option<User>)>>>;
 
 pub struct ChatServer {
     room: Arc<Mutex<Room>>,
@@ -81,7 +84,7 @@ impl ChatServer {
         let ws_stream = accept_async(stream).await?;
 
         let (tx, rx) = unbounded();
-        peer_map.lock().unwrap().insert(addr, tx);
+        peer_map.lock().unwrap().insert(addr, (tx, None));
 
         let (outgoing, incoming) = ws_stream.split();
 
@@ -103,6 +106,14 @@ impl ChatServer {
         future::select(broadcast_incoming, receive_from_others).await;
 
         peer_map.lock().unwrap().remove(&addr);
+        Self::send_to_all(
+            Message {
+                msg_type: MessageType::Server(ServerMsg::UserLeft { addr, id: None }),
+                passwd: None,
+            },
+            peer_map,
+            None,
+        );
 
         Ok(())
     }
@@ -121,14 +132,14 @@ impl ChatServer {
             })
             .map(|(_, ws_sink)| ws_sink);
 
-        for recp in broadcast_recipients {
+        for (recp, _) in broadcast_recipients {
             recp.unbounded_send(msg.to_ttmessage()).unwrap();
         }
     }
 
     fn send_to_one(msg: Message, peer_map: PeerMap, addr: SocketAddr) {
         let peers = peer_map.lock().unwrap();
-        let recp = peers.get(&addr).unwrap();
+        let recp = &peers.get(&addr).unwrap().0;
         recp.unbounded_send(msg.to_ttmessage()).unwrap();
     }
 
@@ -170,13 +181,14 @@ impl ChatServer {
                             msg_type: MessageType::User(UserMsg::UserJoined { user: updated_user }),
                             passwd: room.passwd.clone(),
                         },
-                        peer_map,
+                        peer_map.clone(),
                         None,
                     );
+                    peer_map.clone().lock().unwrap().get_mut(&addr).unwrap().1 = Some(user.clone());
                 }
             },
             MessageType::UserReq(user_req) => match user_req {
-                UserReqMsg::FetchMessagesReq => {
+                UserReqMsg::SyncReq => {
                     let messages = db
                         .lock()
                         .unwrap()
@@ -189,7 +201,16 @@ impl ChatServer {
 
                     Self::send_to_one(
                         Message {
-                            msg_type: MessageType::Server(ServerMsg::MessagesFetch { messages }),
+                            msg_type: MessageType::Server(ServerMsg::Sync {
+                                messages,
+                                users: peer_map
+                                    .clone()
+                                    .lock()
+                                    .unwrap()
+                                    .iter()
+                                    .map(|(_, (_, user))| user.clone().unwrap())
+                                    .collect(),
+                            }),
                             passwd: None,
                         },
                         peer_map,

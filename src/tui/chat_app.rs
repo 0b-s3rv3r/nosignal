@@ -1,27 +1,33 @@
 use crate::network::client::ChatClient;
-use crate::network::{Message, MessageType, ServerMsg, UserMsg, UserReqMsg};
+use crate::network::{
+    message::{Message, MessageType, ServerMsg, UserMsg, UserReqMsg},
+    User,
+};
 use crate::schema::TextMessage;
-use crate::tui::ui::{ChatStyle, MessageItem, PopupState, StatefulArea, StatefulList, Tui};
+use crate::tui::ui::{ChatStyle, MsgItem, PopupState, StatefulArea, StatefulList, Tui};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{prelude::*, style::Style};
 use regex::Regex;
+use std::collections::HashMap;
 use std::io;
+use std::net::SocketAddr;
 use tokio::time::Duration;
 use tui_textarea::CursorMove;
 
 pub struct ChatApp<'a> {
     pub running: bool,
-    pub client: ChatClient,
     pub style: ChatStyle,
+    pub client: ChatClient,
+    pub users: HashMap<SocketAddr, User>,
     pub messages: StatefulList<Text<'a>>,
-    pub commands: Vec<Command>,
     pub current_popup: PopupState,
     pub msg_area: StatefulArea<'a>,
+    pub commands: Vec<Command>,
 }
 
 impl<'a> ChatApp<'a> {
     pub fn new(client: ChatClient, light_mode: bool) -> Self {
-        let style = ChatStyle::new(
+        let mut style = ChatStyle::new(
             Style::new().bg(Color::Rgb(0, 0, 0)).fg(Color::White),
             Style::new().fg(Color::Yellow),
             Style::new().fg(Color::Rgb(0, 0, 0)).bg(Color::White).bold(),
@@ -32,13 +38,14 @@ impl<'a> ChatApp<'a> {
         }
 
         Self {
+            running: true,
             style: style.clone(),
+            client,
+            users: HashMap::new(),
             messages: StatefulList::default(),
             msg_area: StatefulArea::new(style),
             current_popup: PopupState::None,
             commands: vec![(Regex::new(r"/ban\s+(\S+)").unwrap(), Action::Ban)],
-            running: true,
-            client,
         }
     }
 
@@ -46,8 +53,6 @@ impl<'a> ChatApp<'a> {
         let terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
         let mut tui = Tui::new(terminal);
         tui.term_init()?;
-
-        self.receive_msg().await;
 
         while self.running {
             self.receive_msg().await;
@@ -95,6 +100,7 @@ impl<'a> ChatApp<'a> {
                         self.messages.next();
                     }
                     KeyCode::Char('q') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.client.close_connection();
                         self.running = false;
                     }
                     KeyCode::Enter => {
@@ -131,19 +137,23 @@ impl<'a> ChatApp<'a> {
 
         if let Some(text) = self.msg_area.get_text() {
             if !self.parse_commands(&text).await {
-                let msg = TextMessage::new(&self.client.user, &self.client.room._id, &text);
+                let user = self.client.user.clone();
+                let room = self.client.room.lock().unwrap();
+                let msg = TextMessage::new(&user, &room._id, &text);
 
                 self.client
-                    .send_msg(Message {
-                        msg_type: MessageType::User(UserMsg::Normal { msg: msg.clone() }),
-                        passwd: self.client.room.passwd.clone(),
-                    })
+                    .send_msg(Message::from((
+                        UserMsg::Normal { msg: msg.clone() },
+                        room.passwd.clone(),
+                    )))
                     .await
                     .unwrap();
 
-                self.messages
-                    .items
-                    .push(MessageItem::from((msg, self.client.user.color.clone())).0);
+                self.messages.items.push(MsgItem::user_msg(
+                    &msg,
+                    user.color.clone(),
+                    user._id.clone(),
+                ));
                 self.messages.select_last();
             }
         }
@@ -154,82 +164,83 @@ impl<'a> ChatApp<'a> {
             match msg_type {
                 MessageType::User(user_msg) => match user_msg {
                     UserMsg::Normal { msg } => {
-                        let sender_addr = msg.sender_addr().clone();
-                        self.messages.items.push(
-                            MessageItem::from((
-                                msg,
-                                self.client.users.get(&sender_addr).unwrap().color.clone(),
-                            ))
-                            .0,
-                        );
+                        let user = self.users.get(&msg.sender_addr()).unwrap();
+                        self.messages.items.push(MsgItem::user_msg(
+                            &msg,
+                            user.color.clone(),
+                            user._id.clone(),
+                        ));
+
+                        self.messages.select_last();
                     }
                     UserMsg::UserJoined { user } => {
-                        self.messages.items.push(
-                            MessageItem::new(
-                                format!("{} has joined", user._id),
-                                Color::Rgb(50, 50, 50).into(),
-                            )
-                            .0,
-                        );
+                        self.client.user.addr = user.addr;
+                        self.users.insert(user.addr.unwrap(), user.clone());
+
+                        self.messages.items.push(MsgItem::info_msg(
+                            format!("{} has joined", user._id),
+                            Color::Rgb(50, 50, 50).into(),
+                        ));
+
+                        self.client
+                            .send_msg(Message::from((
+                                UserReqMsg::SyncReq,
+                                self.client.room.lock().unwrap().passwd.clone(),
+                            )))
+                            .await
+                            .unwrap();
+
+                        self.messages.select_last();
                     }
                 },
                 MessageType::Server(server_msg) => match server_msg {
                     ServerMsg::AuthFailure => panic!("Authentication failure"),
-                    ServerMsg::MessagesFetch { messages } => self.messages.items.append(
-                        &mut messages
-                            .iter()
-                            .map(|msg| {
-                                MessageItem::from((
-                                    msg.clone(),
-                                    self.client
-                                        .users
-                                        .get(msg.sender_addr())
-                                        .unwrap()
-                                        .color
-                                        .clone(),
-                                ))
-                                .0
-                            })
-                            .collect::<Vec<Text>>(),
-                    ),
-                    ServerMsg::UserLeft { addr } => {
-                        self.messages.items.push(
-                            MessageItem::new(
-                                format!("{} has left", self.client.users.get(&addr).unwrap()._id),
-                                Color::Rgb(50, 50, 50).into(),
-                            )
-                            .0,
+                    ServerMsg::Sync { messages, users } => {
+                        self.messages.items.append(
+                            &mut messages
+                                .iter()
+                                .map(|msg| {
+                                    let user = self.users.get(&msg.sender_addr()).unwrap();
+                                    MsgItem::user_msg(&msg, user.color.clone(), user._id.clone())
+                                })
+                                .collect::<Vec<Text>>(),
                         );
+
+                        self.users.extend(
+                            users
+                                .into_iter()
+                                .map(|user| (user.addr.unwrap(), user))
+                                .collect::<HashMap<SocketAddr, User>>(),
+                        );
+
+                        self.messages.select_last();
+                    }
+                    ServerMsg::UserLeft { addr: _, id } => {
+                        self.messages.items.push(MsgItem::info_msg(
+                            format!("{} has left", id.unwrap()),
+                            Color::Rgb(50, 50, 50).into(),
+                        ));
+                        self.messages.select_last();
                     }
                     ServerMsg::BanConfirm { addr } => {
-                        self.messages.items.push(
-                            MessageItem::new(
-                                format!(
-                                    "{} has been banned",
-                                    self.client.users.get(&addr).unwrap()._id
-                                ),
-                                Color::Rgb(50, 50, 50).into(),
-                            )
-                            .0,
-                        );
+                        self.messages.items.push(MsgItem::info_msg(
+                            format!("{} has been banned", self.users.get(&addr).unwrap()._id),
+                            Color::Rgb(50, 50, 50).into(),
+                        ));
+                        self.messages.select_last();
                     }
                     ServerMsg::ServerShutdown => {
                         self.client.close_connection();
 
-                        self.messages.items.push(
-                            MessageItem::new(
-                                String::from("Server has been shutted down."),
-                                Color::Rgb(50, 50, 50).into(),
-                            )
-                            .0,
-                        );
+                        self.messages.items.push(MsgItem::info_msg(
+                            String::from("Server has been shutted down."),
+                            Color::Rgb(50, 50, 50).into(),
+                        ));
                     }
                 },
                 _ => (),
             }
         }
-
-        self.messages.select_last();
     }
 
     fn handle_deleting_chars(&mut self) {
@@ -250,7 +261,6 @@ impl<'a> ChatApp<'a> {
                         .send_msg(Message {
                             msg_type: MessageType::UserReq(UserReqMsg::BanReq {
                                 addr: self
-                                    .client
                                     .users
                                     .iter()
                                     .find(|(_, user)| user._id == args[0])
@@ -259,7 +269,7 @@ impl<'a> ChatApp<'a> {
                                     .addr
                                     .unwrap(),
                             }),
-                            passwd: self.client.room.passwd.clone(),
+                            passwd: self.client.room.lock().unwrap().passwd.clone(),
                         })
                         .await
                         .unwrap(),

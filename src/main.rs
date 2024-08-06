@@ -53,10 +53,8 @@ async fn main() -> io::Result<()> {
     match t.as_str() {
         "server" => {
             println!("Starting server...");
-            tokio::spawn(async move {
-                let mut server = ChatServer::new(room, db).await.unwrap();
-                server.run().await.unwrap();
-            });
+            let mut server = ChatServer::new(room, db).await.unwrap();
+            server.run().await.unwrap();
 
             sleep(Duration::from_secs(1)).await;
 
@@ -68,10 +66,14 @@ async fn main() -> io::Result<()> {
 
             let mut app = ChatApp::new(client, false);
             app.run().await?;
+
+            server.stop();
         }
         "client" => {
             let mut client = ChatClient::new(room2, user2);
             client.connect().await.unwrap();
+
+            sleep(Duration::from_secs(1)).await;
 
             let mut app = ChatApp::new(client, false);
             app.run().await?;
