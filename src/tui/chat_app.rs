@@ -55,7 +55,7 @@ impl<'a> ChatApp<'a> {
         tui.term_init()?;
 
         while self.running {
-            self.receive_msg().await;
+            self.handle_msgs().await;
             tui.draw(self)?;
             self.handle_input().await?;
         }
@@ -139,7 +139,7 @@ impl<'a> ChatApp<'a> {
             if !self.parse_commands(&text).await {
                 let user = self.client.user.clone();
                 let room = self.client.room.lock().unwrap();
-                let msg = TextMessage::new(&user, &room._id, &text);
+                let msg = TextMessage::new(&user.addr.unwrap(), &room._id, &text);
 
                 self.client
                     .send_msg(Message::from((
@@ -159,7 +159,7 @@ impl<'a> ChatApp<'a> {
         }
     }
 
-    async fn receive_msg(&mut self) {
+    async fn handle_msgs(&mut self) {
         if let Some(msg_type) = self.client.recv_msg().await.take() {
             match msg_type {
                 MessageType::User(user_msg) => match user_msg {
@@ -174,7 +174,9 @@ impl<'a> ChatApp<'a> {
                         self.messages.select_last();
                     }
                     UserMsg::UserJoined { user } => {
-                        self.client.user.addr = user.addr;
+                        if user._id == self.client.user._id {
+                            self.client.user.addr = user.addr;
+                        }
                         self.users.insert(user.addr.unwrap(), user.clone());
 
                         self.messages.items.push(MsgItem::info_msg(
@@ -182,13 +184,7 @@ impl<'a> ChatApp<'a> {
                             Color::Rgb(50, 50, 50).into(),
                         ));
 
-                        self.client
-                            .send_msg(Message::from((
-                                UserReqMsg::SyncReq,
-                                self.client.room.lock().unwrap().passwd.clone(),
-                            )))
-                            .await
-                            .unwrap();
+                        self.client.sync().await.unwrap();
 
                         self.messages.select_last();
                     }
@@ -215,9 +211,9 @@ impl<'a> ChatApp<'a> {
 
                         self.messages.select_last();
                     }
-                    ServerMsg::UserLeft { addr: _, id } => {
+                    ServerMsg::UserLeft { addr } => {
                         self.messages.items.push(MsgItem::info_msg(
-                            format!("{} has left", id.unwrap()),
+                            format!("{} has left", self.users.get(&addr).unwrap()._id),
                             Color::Rgb(50, 50, 50).into(),
                         ));
                         self.messages.select_last();
@@ -258,19 +254,16 @@ impl<'a> ChatApp<'a> {
                 match command.1 {
                     Action::Ban => self
                         .client
-                        .send_msg(Message {
-                            msg_type: MessageType::UserReq(UserReqMsg::BanReq {
-                                addr: self
-                                    .users
-                                    .iter()
-                                    .find(|(_, user)| user._id == args[0])
-                                    .unwrap()
-                                    .1
-                                    .addr
-                                    .unwrap(),
-                            }),
-                            passwd: self.client.room.lock().unwrap().passwd.clone(),
-                        })
+                        .ban(
+                            &self
+                                .users
+                                .iter()
+                                .find(|(_, user)| user._id == args[0])
+                                .unwrap()
+                                .1
+                                .addr
+                                .unwrap(),
+                        )
                         .await
                         .unwrap(),
                 }

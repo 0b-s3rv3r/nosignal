@@ -60,6 +60,7 @@ impl ChatServer {
                     room.clone(),
                     db.clone(),
                 ));
+                tokio::task::yield_now().await;
             }
         });
 
@@ -69,6 +70,12 @@ impl ChatServer {
     }
 
     pub fn stop(&self) {
+        Self::send_to_all(
+            Message::from((ServerMsg::ServerShutdown, None)),
+            self.peer_map.clone(),
+            None,
+        );
+
         if let Some(joinhandle) = &self.event_loop_handle {
             joinhandle.abort();
         }
@@ -88,6 +95,7 @@ impl ChatServer {
 
         let (outgoing, incoming) = ws_stream.split();
 
+        tokio::task::yield_now().await;
         let broadcast_incoming = incoming.try_for_each(|msg| {
             Self::handle_message(
                 Message::from(msg),
@@ -108,7 +116,7 @@ impl ChatServer {
         peer_map.lock().unwrap().remove(&addr);
         Self::send_to_all(
             Message {
-                msg_type: MessageType::Server(ServerMsg::UserLeft { addr, id: None }),
+                msg_type: MessageType::Server(ServerMsg::UserLeft { addr }),
                 passwd: None,
             },
             peer_map,
@@ -154,7 +162,7 @@ impl ChatServer {
 
         if let Some(passwd) = &room.passwd {
             if let Some(msg_passwd) = &msg.passwd {
-                if msg_passwd != passwd {
+                if msg_passwd != passwd || msg.passwd.is_none() {
                     Self::send_to_one(
                         Message {
                             msg_type: MessageType::Server(ServerMsg::AuthFailure),
@@ -177,10 +185,10 @@ impl ChatServer {
                     let mut updated_user = user.clone();
                     updated_user.addr = Some(addr);
                     Self::send_to_all(
-                        Message {
-                            msg_type: MessageType::User(UserMsg::UserJoined { user: updated_user }),
-                            passwd: room.passwd.clone(),
-                        },
+                        Message::from((
+                            UserMsg::UserJoined { user: updated_user },
+                            room.passwd.clone(),
+                        )),
                         peer_map.clone(),
                         None,
                     );
@@ -200,8 +208,8 @@ impl ChatServer {
                         .collect::<Vec<TextMessage>>();
 
                     Self::send_to_one(
-                        Message {
-                            msg_type: MessageType::Server(ServerMsg::Sync {
+                        Message::from((
+                            ServerMsg::Sync {
                                 messages,
                                 users: peer_map
                                     .clone()
@@ -210,9 +218,9 @@ impl ChatServer {
                                     .iter()
                                     .map(|(_, (_, user))| user.clone().unwrap())
                                     .collect(),
-                            }),
-                            passwd: None,
-                        },
+                            },
+                            room.passwd.clone(),
+                        )),
                         peer_map,
                         addr,
                     );

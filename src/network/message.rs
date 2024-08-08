@@ -5,7 +5,7 @@ use serde_json::{from_str, to_string};
 use std::net::SocketAddr;
 use tokio_tungstenite::tungstenite::Message as TtMessage;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Message {
     pub msg_type: MessageType,
     pub passwd: Option<String>,
@@ -54,26 +54,26 @@ impl From<(ServerMsg, Option<String>)> for Message {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum MessageType {
     User(UserMsg),
     UserReq(UserReqMsg),
     Server(ServerMsg),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum UserMsg {
     Normal { msg: TextMessage },
     UserJoined { user: User },
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum UserReqMsg {
     SyncReq,
     BanReq { addr: SocketAddr },
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum ServerMsg {
     AuthFailure,
     Sync {
@@ -82,7 +82,6 @@ pub enum ServerMsg {
     },
     UserLeft {
         addr: SocketAddr,
-        id: Option<String>,
     },
     BanConfirm {
         addr: SocketAddr,

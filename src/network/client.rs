@@ -4,7 +4,10 @@ use super::{
 };
 use crate::schema::Room;
 use futures_util::{SinkExt, StreamExt};
-use std::sync::{Arc, Mutex};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
 use tokio::{
     sync::mpsc::{self, error::SendError, Receiver, Sender},
     task::JoinHandle,
@@ -73,6 +76,8 @@ impl ChatClient {
                             return;
                         }
                     }
+
+                    tokio::task::yield_now().await;
                 }
             });
 
@@ -83,6 +88,7 @@ impl ChatClient {
                         eprintln!("Error sending message: {}", e);
                         return;
                     }
+                    tokio::task::yield_now().await;
                 }
             });
         });
@@ -122,6 +128,21 @@ impl ChatClient {
                 .send(
                     Message::from((
                         UserReqMsg::SyncReq,
+                        self.room.lock().unwrap().passwd.clone(),
+                    ))
+                    .to_ttmessage(),
+                )
+                .await?
+        }
+        Ok(())
+    }
+
+    pub async fn ban(&self, addr: &SocketAddr) -> Result<(), SendError<TtMessage>> {
+        if let Some(transceiver) = &self.transceiver {
+            transceiver
+                .send(
+                    Message::from((
+                        UserReqMsg::BanReq { addr: addr.clone() },
                         self.room.lock().unwrap().passwd.clone(),
                     ))
                     .to_ttmessage(),

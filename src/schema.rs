@@ -23,9 +23,9 @@ pub struct TextMessage {
 }
 
 impl TextMessage {
-    pub fn new(user: &User, room_id: &str, msg: &str) -> Self {
+    pub fn new(user_addr: &SocketAddr, room_id: &str, msg: &str) -> Self {
         Self {
-            sender_addr: user.addr.unwrap(),
+            sender_addr: *user_addr,
             room_id: room_id.into(),
             content: msg.into(),
             timestamp: SystemTime::now(),
