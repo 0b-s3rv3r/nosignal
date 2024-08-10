@@ -31,7 +31,7 @@ pub fn run(cmd_req: CommandRequest, open_memory: bool) -> Result<(), AppError> {
     Ok(())
 }
 
-fn run_option(cmd_req: CommandRequest, db: &mut DbRepo) -> Result<(), AppError> {
+fn run_option(cmd_req: CommandRequest, db: &DbRepo) -> Result<(), AppError> {
     match cmd_req {
         CommandRequest::Create {
             room_id,
@@ -43,7 +43,7 @@ fn run_option(cmd_req: CommandRequest, db: &mut DbRepo) -> Result<(), AppError> 
             username,
             color,
         } => join_room(id_or_address, username, color)?,
-        CommandRequest::Delete { room_id } => delete_room(db, &room_id)?,
+        CommandRequest::Delete { room_id } => delete_room(&db, &room_id)?,
         CommandRequest::List => list_rooms_and_local_data(&db)?,
         CommandRequest::Set { option, value } => set_local_data(db, &option, &value)?,
         CommandRequest::Invalid => return Err(AppError::InvalidCommand),
@@ -53,18 +53,17 @@ fn run_option(cmd_req: CommandRequest, db: &mut DbRepo) -> Result<(), AppError> 
 }
 
 pub fn db_init(db_path: Option<&Path>) -> pdbResult<DbRepo> {
-    if db_path.is_none() {
-        return Ok(DbRepo::memory_init()?);
-    }
-
-    let db = DbRepo::init(db_path.unwrap())?;
+    let db = if let Some(path) = db_path {
+        DbRepo::init(path)?
+    } else {
+        DbRepo::memory_init()?
+    };
 
     if db.local_data.count_documents()? == 0 {
-        db.local_data.insert_one(LocalData {
+        db.local_data.insert_one(&LocalData {
             default_user_id: get_unique_id(),
             default_room_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 12345),
             default_color: Color::White,
-            remember_passwords: false,
             light_mode: false,
         })?;
     }
@@ -73,7 +72,7 @@ pub fn db_init(db_path: Option<&Path>) -> pdbResult<DbRepo> {
 }
 
 fn create_room(
-    db: &mut DbRepo,
+    db: &DbRepo,
     room_id: &str,
     room_ip: Option<String>,
     password: bool,
@@ -105,8 +104,8 @@ fn create_room(
     Ok(())
 }
 
-fn delete_room(db: &mut DbRepo, room_id: &str) -> Result<(), AppError> {
-    if let Some(room) = db.rooms.find_one(doc! {"room_id": room_id})? {
+fn delete_room(db: &DbRepo, room_id: &str) -> Result<(), AppError> {
+    if let Some(room) = db.rooms.find_one(doc! {"_id": room_id})? {
         if room.is_owner {
             if let Some(passwd) = room.passwd {
                 hash_passwd(&passwd);
@@ -119,7 +118,7 @@ fn delete_room(db: &mut DbRepo, room_id: &str) -> Result<(), AppError> {
         return Err(AppError::NotExistingId);
     }
 
-    db.rooms.delete_one(doc! {"room_id": room_id})?;
+    db.rooms.delete_one(doc! {"_id": room_id})?;
     Ok(())
 }
 
@@ -148,7 +147,7 @@ fn join_room(
     todo!("if there is no such id then join, but store info temporary")
 }
 
-fn set_local_data(db: &mut DbRepo, option: &str, value: &str) -> Result<(), AppError> {
+fn set_local_data(db: &DbRepo, option: &str, value: &str) -> Result<(), AppError> {
     db.local_data.update_one(
         doc! {},
         doc! {"$set": doc! {
@@ -324,11 +323,11 @@ mod test {
 
     #[test]
     fn new_room_creation() {
-        let mut db = db_init(None).unwrap();
+        let db = db_init(None).unwrap();
 
         let room_with_custom_values = Room {
             _id: "someroom".into(),
-            addr: SocketAddr::from_str("192.168.0.2:12345".into()).unwrap(),
+            addr: SocketAddr::from_str("127.0.0.1:8080".into()).unwrap(),
             passwd: None,
             banned_addrs: vec![],
             is_owner: true,
@@ -337,15 +336,18 @@ mod test {
         run_option(
             CommandRequest::Create {
                 room_id: room_with_custom_values._id.clone(),
-                ip: Some(room_with_custom_values.addr.ip().to_string()),
+                ip: Some(room_with_custom_values.addr.to_string()),
                 password: false,
             },
-            &mut db,
+            &db,
         )
         .unwrap();
 
         assert_eq!(
-            db.rooms.find_one(doc! {"id": "someroom"}).unwrap().unwrap(),
+            db.rooms
+                .find_one(doc! {"_id": "someroom"})
+                .unwrap()
+                .unwrap(),
             room_with_custom_values
         );
 
@@ -363,13 +365,13 @@ mod test {
                 ip: None,
                 password: false,
             },
-            &mut db,
+            &db,
         )
         .unwrap();
 
         assert_eq!(
             db.rooms
-                .find_one(doc! {"id": "anotheroom"})
+                .find_one(doc! {"_id": "anotheroom"})
                 .unwrap()
                 .unwrap(),
             room_with_default_values
@@ -378,11 +380,11 @@ mod test {
 
     #[test]
     fn room_deletion() {
-        let mut db = db_init(None).unwrap();
+        let db = db_init(None).unwrap();
 
         let room = Room {
             _id: "someroom".into(),
-            addr: SocketAddr::from_str("192.168.0.2:12345").unwrap(),
+            addr: SocketAddr::from_str("127.0.0.1:8080").unwrap(),
             passwd: None,
             banned_addrs: vec![],
             is_owner: true,
@@ -391,15 +393,18 @@ mod test {
         run_option(
             CommandRequest::Create {
                 room_id: room._id.clone(),
-                ip: Some(room.addr.ip().to_string()),
+                ip: Some(room.addr.to_string()),
                 password: false,
             },
-            &mut db,
+            &db,
         )
         .unwrap();
 
         assert_eq!(
-            db.rooms.find_one(doc! {"id": "someroom"}).unwrap().unwrap(),
+            db.rooms
+                .find_one(doc! {"_id": "someroom"})
+                .unwrap()
+                .unwrap(),
             room
         );
 
@@ -407,42 +412,32 @@ mod test {
             CommandRequest::Delete {
                 room_id: "someroom".into(),
             },
-            &mut db,
+            &db,
         )
         .unwrap();
 
-        assert_eq!(db.rooms.find_one(doc! {"id": "someroom"}).unwrap(), None);
+        assert_eq!(db.rooms.find_one(doc! {"_id": "someroom"}).unwrap(), None);
     }
 
     #[test]
     fn local_data_update() {
-        let mut db = db_init(None).unwrap();
+        let db = db_init(None).unwrap();
 
-        let _local_data = LocalData {
+        let local_data = LocalData {
             default_user_id: "*".into(),
             default_room_addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
             default_color: Color::White,
-            remember_passwords: false,
             light_mode: false,
         };
-
-        assert!(run_option(CommandRequest::Invalid, &mut db).is_err());
 
         let local_data_from_db = db.local_data.find_one(None).unwrap().unwrap();
 
         assert_eq!(
             local_data_from_db.default_room_addr,
-            local_data_from_db.default_room_addr
+            local_data.default_room_addr
         );
-        assert_eq!(
-            local_data_from_db.default_color,
-            local_data_from_db.default_color
-        );
-        assert_eq!(
-            local_data_from_db.remember_passwords,
-            local_data_from_db.remember_passwords
-        );
-        assert_eq!(local_data_from_db.light_mode, local_data_from_db.light_mode);
+        assert_eq!(local_data_from_db.default_color, local_data.default_color);
+        assert_eq!(local_data_from_db.light_mode, local_data.light_mode);
     }
 
     #[test]

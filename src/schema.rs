@@ -16,10 +16,10 @@ pub struct Room {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct TextMessage {
-    room_id: String,
-    sender_addr: SocketAddr,
-    content: String,
-    timestamp: SystemTime,
+    pub room_id: String,
+    pub sender_addr: SocketAddr,
+    pub content: String,
+    pub timestamp: SystemTime,
 }
 
 impl TextMessage {
@@ -31,22 +31,6 @@ impl TextMessage {
             timestamp: SystemTime::now(),
         }
     }
-
-    pub fn sender_addr(&self) -> &SocketAddr {
-        &self.sender_addr
-    }
-
-    pub fn room_id(&self) -> &String {
-        &self.room_id
-    }
-
-    pub fn content(&self) -> &String {
-        &self.content
-    }
-
-    pub fn timestamp(&self) -> &SystemTime {
-        &self.timestamp
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -54,7 +38,6 @@ pub struct LocalData {
     pub default_user_id: String,
     pub default_room_addr: SocketAddr,
     pub default_color: Color,
-    pub remember_passwords: bool,
     pub light_mode: bool,
 }
 

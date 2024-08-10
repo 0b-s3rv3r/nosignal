@@ -33,7 +33,7 @@ mod test {
     use tokio::time::sleep;
 
     #[tokio::test]
-    async fn messages_are_correct() {
+    async fn messages_sending() {
         let passwd = String::from("password");
         hash_passwd(&passwd);
         let room = Room {
@@ -71,13 +71,13 @@ mod test {
         let mut client = ChatClient::new(room_, user.clone());
         client.connect().await.unwrap();
         sleep(Duration::from_secs(1)).await;
-        server.stop();
 
         if let MessageType::User(UserMsg::UserJoined { user: user_ }) =
             client.recv_msg().await.unwrap()
         {
             user.addr = user_.addr;
-            peermap.insert(user.addr.unwrap(), user.clone()).unwrap();
+            peermap.insert(user.addr.unwrap(), user.clone());
+            assert_eq!(user, user_)
         }
 
         let sended_msg = TextMessage::new(&user.addr.unwrap(), &room._id, "some short message");
@@ -92,17 +92,22 @@ mod test {
             .await
             .unwrap();
 
+        assert!(server.running);
         let mut client2 = ChatClient::new(room2.clone(), user2.clone());
         client2.connect().await.unwrap();
+
+        sleep(Duration::from_secs(1)).await;
 
         if let MessageType::User(UserMsg::UserJoined { user: user_ }) =
             client2.recv_msg().await.unwrap()
         {
             user2.addr = user_.addr;
-            peermap.insert(user.addr.unwrap(), user.clone()).unwrap();
+            peermap.insert(user.addr.unwrap(), user.clone());
         }
 
         client2.sync().await.unwrap();
+
+        sleep(Duration::from_secs(1)).await;
 
         if let MessageType::Server(ServerMsg::Sync { messages, users }) =
             client2.recv_msg().await.unwrap()
@@ -121,6 +126,8 @@ mod test {
             .await
             .unwrap();
 
+        // sleep(Duration::from_secs(1)).await;
+
         if let MessageType::User(UserMsg::Normal { msg }) = client.recv_msg().await.unwrap() {
             assert_eq!(msg, sended_msg);
         }
@@ -134,6 +141,8 @@ mod test {
             )))
             .await
             .unwrap();
+
+        // sleep(Duration::from_secs(1)).await;
 
         assert_eq!(
             client.recv_msg().await.unwrap(),
@@ -149,6 +158,8 @@ mod test {
             )))
             .await
             .unwrap();
+
+        // sleep(Duration::from_secs(1)).await;
 
         assert_eq!(
             client.recv_msg().await.unwrap(),
@@ -172,5 +183,8 @@ mod test {
         );
 
         client.close_connection();
+        client2.close_connection();
+
+        panic!("gowno");
     }
 }

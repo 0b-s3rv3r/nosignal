@@ -128,7 +128,7 @@ pub struct StatefulArea<'a> {
 impl<'a> StatefulArea<'a> {
     const MAX_AREA_HEIGHT: u16 = 20;
 
-    pub fn new(style: ChatStyle) -> Self {
+    pub fn new(style: ChatStyle, user_id: String) -> Self {
         let mut textarea = TextArea::default();
         textarea.set_cursor_line_style(style.block);
         textarea.set_block(
@@ -138,7 +138,9 @@ impl<'a> StatefulArea<'a> {
                 .padding(Padding::new(2, 2, 1, 1))
                 .border_set(border::ROUNDED),
         );
-        textarea.set_search_pattern(r"@\w+").unwrap();
+        textarea
+            .set_search_pattern(&format!(r"@{}", user_id))
+            .unwrap();
         textarea.set_search_style(style.mentioning);
         textarea.set_placeholder_text("Start typing...");
         textarea.set_placeholder_style(Style::new().fg(Color::Gray));
@@ -283,38 +285,47 @@ impl MsgItem {
         text.style(Style::new().fg(color.into()).italic())
     }
 
-    pub fn user_msg<'a>(text_msg: &TextMessage, color: ChatColor, user_id: String) -> Text<'a> {
+    pub fn user_msg<'a>(
+        text_msg: &TextMessage,
+        user_color: impl Into<Color>,
+        content_color: impl Into<Color>,
+        user_id: String,
+    ) -> Text<'a> {
         let mut text = Text::from(Line::from(vec![
-            Span::from(user_id).bold(),
-            Span::from(format!(" {}", systime_to_string(*text_msg.timestamp())))
+            Span::from(user_id.clone()).style(Style::new().bold().fg(user_color.into())),
+            Span::from(format!(" {}", systime_to_string(text_msg.timestamp)))
                 .fg(Color::Rgb(50, 50, 50))
                 .italic(),
         ]));
         let content = highlight_text(
-            text_msg.content().into(),
-            r"@(\w+)",
+            text_msg.content.clone(),
+            &format!(r"@{}", user_id),
             Style::new().bg(Color::White).fg(Color::Black).bold(),
         );
+
+        let content_color_ = content_color.into();
         content
             .lines
-            .iter()
-            .for_each(|line| text.push_line(line.clone()));
+            .into_iter()
+            .for_each(|line| text.push_line(line.fg(content_color_).not_bold()));
         text.push_line("");
-        text.style(Style::new().fg(color.into()))
+        text
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct ChatStyle {
     pub block: Style,
+    pub msg_content: Style,
     pub msg_highlight: Style,
     pub mentioning: Style,
 }
 
 impl ChatStyle {
-    pub fn new(block: Style, msg_highlight: Style, mentioning: Style) -> Self {
+    pub fn new(block: Style, msg_content: Style, msg_highlight: Style, mentioning: Style) -> Self {
         Self {
             block,
+            msg_content,
             msg_highlight,
             mentioning,
         }
@@ -322,6 +333,7 @@ impl ChatStyle {
 
     pub fn reverse_colors(&mut self) {
         self.block = self.block.reversed();
+        self.msg_content = self.msg_content.reversed();
         self.msg_highlight = self.msg_highlight.reversed();
         self.mentioning = self.mentioning.reversed();
     }

@@ -31,6 +31,7 @@ pub struct ChatServer {
     peer_map: PeerMap,
     event_loop_handle: Option<JoinHandle<()>>,
     db: Arc<Mutex<DbRepo>>,
+    pub running: bool,
 }
 
 impl ChatServer {
@@ -40,6 +41,7 @@ impl ChatServer {
             room: Arc::new(Mutex::new(room)),
             event_loop_handle: None,
             db,
+            running: false,
         })
     }
 
@@ -60,16 +62,16 @@ impl ChatServer {
                     room.clone(),
                     db.clone(),
                 ));
-                tokio::task::yield_now().await;
             }
         });
 
         self.event_loop_handle = Some(joinhandle);
+        self.running = true;
 
         Ok(())
     }
 
-    pub fn stop(&self) {
+    pub fn stop(&mut self) {
         Self::send_to_all(
             Message::from((ServerMsg::ServerShutdown, None)),
             self.peer_map.clone(),
@@ -79,6 +81,8 @@ impl ChatServer {
         if let Some(joinhandle) = &self.event_loop_handle {
             joinhandle.abort();
         }
+
+        self.running = false;
     }
 
     async fn handle_conection(
@@ -95,15 +99,16 @@ impl ChatServer {
 
         let (outgoing, incoming) = ws_stream.split();
 
-        tokio::task::yield_now().await;
         let broadcast_incoming = incoming.try_for_each(|msg| {
-            Self::handle_message(
+            if Self::handle_message(
                 Message::from(msg),
                 peer_map.clone(),
                 addr,
                 room.clone(),
                 db.clone(),
-            );
+            ) {
+                return future::err(TtError::ConnectionClosed);
+            }
 
             future::ok(())
         });
@@ -131,9 +136,9 @@ impl ChatServer {
 
         let broadcast_recipients = peers
             .iter()
-            .filter(|(peer_addr, _)| {
+            .filter(|(&peer_addr, _)| {
                 if let Some(addr) = except_addr {
-                    peer_addr != &&addr
+                    peer_addr != addr
                 } else {
                     true
                 }
@@ -157,7 +162,7 @@ impl ChatServer {
         addr: SocketAddr,
         room: Arc<Mutex<Room>>,
         db: Arc<Mutex<DbRepo>>,
-    ) {
+    ) -> ShouldBan {
         let room = room.lock().unwrap();
 
         if let Some(passwd) = &room.passwd {
@@ -175,24 +180,35 @@ impl ChatServer {
             }
         }
 
-        match &msg.msg_type {
+        match msg.msg_type {
             MessageType::User(user_msg) => match user_msg {
                 UserMsg::Normal { msg: text_msg, .. } => {
-                    Self::send_to_all(msg.clone(), peer_map.clone(), Some(addr));
+                    Self::send_to_all(
+                        Message::from((
+                            UserMsg::Normal {
+                                msg: text_msg.clone(),
+                            },
+                            None,
+                        )),
+                        peer_map.clone(),
+                        Some(addr),
+                    );
                     db.lock().unwrap().messages.insert_one(text_msg).unwrap();
                 }
                 UserMsg::UserJoined { user } => {
-                    let mut updated_user = user.clone();
+                    let mut updated_user = user;
                     updated_user.addr = Some(addr);
                     Self::send_to_all(
                         Message::from((
-                            UserMsg::UserJoined { user: updated_user },
+                            UserMsg::UserJoined {
+                                user: updated_user.clone(),
+                            },
                             room.passwd.clone(),
                         )),
                         peer_map.clone(),
                         None,
                     );
-                    peer_map.clone().lock().unwrap().get_mut(&addr).unwrap().1 = Some(user.clone());
+                    peer_map.lock().unwrap().get_mut(&addr).unwrap().1 = Some(updated_user);
                 }
             },
             MessageType::UserReq(user_req) => match user_req {
@@ -221,13 +237,23 @@ impl ChatServer {
                             },
                             room.passwd.clone(),
                         )),
-                        peer_map,
+                        peer_map.clone(),
                         addr,
                     );
                 }
-                UserReqMsg::BanReq { addr } => todo!(),
+                UserReqMsg::BanReq { addr } => {
+                    Self::send_to_all(
+                        Message::from((ServerMsg::BanConfirm { addr }, room.passwd.clone())),
+                        peer_map,
+                        None,
+                    );
+                    return true;
+                }
             },
             _ => (),
         }
+        false
     }
 }
+
+type ShouldBan = bool;

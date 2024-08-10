@@ -29,6 +29,7 @@ impl<'a> ChatApp<'a> {
     pub fn new(client: ChatClient, light_mode: bool) -> Self {
         let mut style = ChatStyle::new(
             Style::new().bg(Color::Rgb(0, 0, 0)).fg(Color::White),
+            Style::new().fg(Color::White),
             Style::new().fg(Color::Yellow),
             Style::new().fg(Color::Rgb(0, 0, 0)).bg(Color::White).bold(),
         );
@@ -37,13 +38,15 @@ impl<'a> ChatApp<'a> {
             style.reverse_colors();
         }
 
+        let user_id = client.user._id.clone();
+
         Self {
             running: true,
             style: style.clone(),
             client,
             users: HashMap::new(),
             messages: StatefulList::default(),
-            msg_area: StatefulArea::new(style),
+            msg_area: StatefulArea::new(style, user_id),
             current_popup: PopupState::None,
             commands: vec![(Regex::new(r"/ban\s+(\S+)").unwrap(), Action::Ban)],
         }
@@ -152,6 +155,7 @@ impl<'a> ChatApp<'a> {
                 self.messages.items.push(MsgItem::user_msg(
                     &msg,
                     user.color.clone(),
+                    self.style.msg_content.fg.unwrap(),
                     user._id.clone(),
                 ));
                 self.messages.select_last();
@@ -164,10 +168,11 @@ impl<'a> ChatApp<'a> {
             match msg_type {
                 MessageType::User(user_msg) => match user_msg {
                     UserMsg::Normal { msg } => {
-                        let user = self.users.get(&msg.sender_addr()).unwrap();
+                        let user = self.users.get(&msg.sender_addr).unwrap();
                         self.messages.items.push(MsgItem::user_msg(
                             &msg,
                             user.color.clone(),
+                            self.style.msg_content.fg.unwrap(),
                             user._id.clone(),
                         ));
 
@@ -196,8 +201,13 @@ impl<'a> ChatApp<'a> {
                             &mut messages
                                 .iter()
                                 .map(|msg| {
-                                    let user = self.users.get(&msg.sender_addr()).unwrap();
-                                    MsgItem::user_msg(&msg, user.color.clone(), user._id.clone())
+                                    let user = self.users.get(&msg.sender_addr).unwrap();
+                                    MsgItem::user_msg(
+                                        &msg,
+                                        user.color.clone(),
+                                        self.style.msg_content.fg.unwrap(),
+                                        user._id.clone(),
+                                    )
                                 })
                                 .collect::<Vec<Text>>(),
                         );
@@ -252,20 +262,13 @@ impl<'a> ChatApp<'a> {
         for command in self.commands.iter() {
             if let Some(args) = Self::parse_command(command, haystack) {
                 match command.1 {
-                    Action::Ban => self
-                        .client
-                        .ban(
-                            &self
-                                .users
-                                .iter()
-                                .find(|(_, user)| user._id == args[0])
-                                .unwrap()
-                                .1
-                                .addr
-                                .unwrap(),
-                        )
-                        .await
-                        .unwrap(),
+                    Action::Ban => {
+                        if let Some(user_addr) =
+                            self.users.iter().find(|(_, user)| user._id == args[0])
+                        {
+                            self.client.ban(&user_addr.1.addr.unwrap()).await.unwrap();
+                        }
+                    }
                 }
                 return true;
             }

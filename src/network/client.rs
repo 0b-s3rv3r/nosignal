@@ -76,8 +76,6 @@ impl ChatClient {
                             return;
                         }
                     }
-
-                    tokio::task::yield_now().await;
                 }
             });
 
@@ -88,7 +86,6 @@ impl ChatClient {
                         eprintln!("Error sending message: {}", e);
                         return;
                     }
-                    tokio::task::yield_now().await;
                 }
             });
         });
