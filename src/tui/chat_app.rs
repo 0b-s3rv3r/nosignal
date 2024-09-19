@@ -157,6 +157,7 @@ impl<'a> ChatApp<'a> {
                     user.color.clone(),
                     self.style.msg_content.fg.unwrap(),
                     user._id.clone(),
+                    self.client.user._id.clone(),
                 ));
                 self.messages.select_last();
             }
@@ -174,6 +175,7 @@ impl<'a> ChatApp<'a> {
                             user.color.clone(),
                             self.style.msg_content.fg.unwrap(),
                             user._id.clone(),
+                            self.client.user._id.clone(),
                         ));
 
                         self.messages.select_last();
@@ -207,6 +209,7 @@ impl<'a> ChatApp<'a> {
                                         user.color.clone(),
                                         self.style.msg_content.fg.unwrap(),
                                         user._id.clone(),
+                                        self.client.user._id.clone(),
                                     )
                                 })
                                 .collect::<Vec<Text>>(),
@@ -229,11 +232,17 @@ impl<'a> ChatApp<'a> {
                         self.messages.select_last();
                     }
                     ServerMsg::BanConfirm { addr } => {
+                        self.client.room.lock().unwrap().banned_addrs.push(addr);
+
                         self.messages.items.push(MsgItem::info_msg(
                             format!("{} has been banned", self.users.get(&addr).unwrap()._id),
                             Color::Rgb(50, 50, 50).into(),
                         ));
+
                         self.messages.select_last();
+                    }
+                    ServerMsg::ConnectionRefused => {
+                        panic!("You has been banned from this server!");
                     }
                     ServerMsg::ServerShutdown => {
                         self.client.close_connection();

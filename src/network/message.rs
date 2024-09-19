@@ -86,6 +86,7 @@ pub enum ServerMsg {
     BanConfirm {
         addr: SocketAddr,
     },
+    ConnectionRefused,
     ServerShutdown,
 }
 

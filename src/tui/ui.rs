@@ -290,6 +290,7 @@ impl MsgItem {
         user_color: impl Into<Color>,
         content_color: impl Into<Color>,
         user_id: String,
+        target_user: String,
     ) -> Text<'a> {
         let mut text = Text::from(Line::from(vec![
             Span::from(user_id.clone()).style(Style::new().bold().fg(user_color.into())),
@@ -299,7 +300,7 @@ impl MsgItem {
         ]));
         let content = highlight_text(
             text_msg.content.clone(),
-            &format!(r"@{}", user_id),
+            &format!(r"@{}", target_user),
             Style::new().bg(Color::White).fg(Color::Black).bold(),
         );
 

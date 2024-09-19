@@ -13,35 +13,36 @@ use std::{
     io,
     net::SocketAddr,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio::{
     net::{TcpListener, TcpStream},
-    task::JoinHandle,
+    time::sleep,
 };
 use tokio_tungstenite::{
     accept_async,
     tungstenite::{Error as TtError, Message as TtMessage},
 };
+use tokio_util::sync::CancellationToken;
 
 type Tx = UnboundedSender<TtMessage>;
 type PeerMap = Arc<Mutex<HashMap<SocketAddr, (Tx, Option<User>)>>>;
+type Db = Arc<Mutex<DbRepo>>;
 
 pub struct ChatServer {
     room: Arc<Mutex<Room>>,
     peer_map: PeerMap,
-    event_loop_handle: Option<JoinHandle<()>>,
-    db: Arc<Mutex<DbRepo>>,
-    pub running: bool,
+    db: Db,
+    finisher: CancellationToken,
 }
 
 impl ChatServer {
-    pub async fn new(room: Room, db: Arc<Mutex<DbRepo>>) -> io::Result<Self> {
+    pub async fn new(room: Room, db: Db) -> io::Result<Self> {
         Ok(Self {
             peer_map: PeerMap::new(Mutex::new(HashMap::new())),
             room: Arc::new(Mutex::new(room)),
-            event_loop_handle: None,
             db,
-            running: false,
+            finisher: CancellationToken::new(),
         })
     }
 
@@ -50,39 +51,71 @@ impl ChatServer {
         let room = self.room.clone();
         let db = self.db.clone();
         let addr = self.room.lock().unwrap().addr;
+        let cloned_token = self.finisher.clone();
 
-        let joinhandle = tokio::spawn(async move {
-            let listener = TcpListener::bind(&addr).await.unwrap();
+        tokio::spawn(async move {
+            let cloned_token = cloned_token.clone();
+            let cloned_token_ = cloned_token.clone();
 
-            while let Ok((stream, addr)) = listener.accept().await {
-                tokio::spawn(Self::handle_conection(
-                    peer_map.clone(),
-                    stream,
-                    addr,
-                    room.clone(),
-                    db.clone(),
-                ));
-            }
+            let accepting_task = tokio::spawn(async move {
+                let cloned_token_ = cloned_token_.clone();
+
+                let listener = TcpListener::bind(&addr).await.unwrap();
+
+                while !cloned_token_.is_cancelled() {
+                    tokio::select! {
+                        accept_result = listener.accept() => {
+                            match accept_result {
+                                Ok((stream, addr)) => {
+                                    // println!("new user {}", addr.clone());
+                                    // let is_banned = room.clone().lock().unwrap().banned_addrs.iter().any(|&banned| banned != addr );
+                                    //
+                                    // if !is_banned {
+                                        tokio::spawn(Self::handle_conection(
+                                            peer_map.clone(),
+                                            stream,
+                                            addr,
+                                            room.clone(),
+                                            db.clone(),
+                                            cloned_token_.clone(),
+                                        ));
+                                    // } else {
+                                    //     Self::send_to_one(Message::from((ServerMsg::ConnectionRefused, None)), peer_map.clone(), addr.clone());
+                                    // }
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to accept connection: {}", e);
+                                }
+                            }
+                        }
+                        _ = cloned_token_.cancelled() => {
+                            break;
+                        }
+                    }
+                }
+            });
+
+            pin_mut!(accepting_task);
+            tokio::select! {
+                _ = accepting_task => {},
+                _ = cloned_token.cancelled() => {}
+            };
         });
-
-        self.event_loop_handle = Some(joinhandle);
-        self.running = true;
 
         Ok(())
     }
 
     pub fn stop(&mut self) {
-        Self::send_to_all(
-            Message::from((ServerMsg::ServerShutdown, None)),
-            self.peer_map.clone(),
-            None,
-        );
+        // Self::send_to_all(
+        //     Message::from((ServerMsg::ServerShutdown, None)),
+        //     self.peer_map.clone(),
+        //     None,
+        // );
+        // println!("shutdown msg sent");
 
-        if let Some(joinhandle) = &self.event_loop_handle {
-            joinhandle.abort();
-        }
+        // sleep(Duration::from_secs(1)).await;
 
-        self.running = false;
+        self.finisher.cancel();
     }
 
     async fn handle_conection(
@@ -90,8 +123,10 @@ impl ChatServer {
         stream: TcpStream,
         addr: SocketAddr,
         room: Arc<Mutex<Room>>,
-        db: Arc<Mutex<DbRepo>>,
+        db: Db,
+        finisher: CancellationToken,
     ) -> Result<(), TtError> {
+        // println!("connection with: {}", addr.clone());
         let ws_stream = accept_async(stream).await?;
 
         let (tx, rx) = unbounded();
@@ -116,9 +151,14 @@ impl ChatServer {
         let receive_from_others = rx.map(Ok).forward(outgoing);
 
         pin_mut!(broadcast_incoming, receive_from_others);
-        future::select(broadcast_incoming, receive_from_others).await;
+        tokio::select! {
+            _ = broadcast_incoming => {},
+            _ = receive_from_others => {},
+            _ = finisher.cancelled() => return Ok(()),
+        };
 
         peer_map.lock().unwrap().remove(&addr);
+
         Self::send_to_all(
             Message {
                 msg_type: MessageType::Server(ServerMsg::UserLeft { addr }),
@@ -131,14 +171,14 @@ impl ChatServer {
         Ok(())
     }
 
-    fn send_to_all(msg: Message, peer_map: PeerMap, except_addr: Option<SocketAddr>) {
+    fn send_to_all(msg: Message, peer_map: PeerMap, except_addr: Option<&SocketAddr>) {
         let peers = peer_map.lock().unwrap();
 
         let broadcast_recipients = peers
             .iter()
             .filter(|(&peer_addr, _)| {
                 if let Some(addr) = except_addr {
-                    peer_addr != addr
+                    peer_addr != *addr
                 } else {
                     true
                 }
@@ -150,9 +190,11 @@ impl ChatServer {
         }
     }
 
-    fn send_to_one(msg: Message, peer_map: PeerMap, addr: SocketAddr) {
-        let peers = peer_map.lock().unwrap();
-        let recp = &peers.get(&addr).unwrap().0;
+    fn send_to_one(msg: Message, peer_map: PeerMap, addr: &SocketAddr) {
+        let recp = {
+            let peers = peer_map.lock().unwrap();
+            peers.get(&addr).unwrap().0.clone()
+        };
         recp.unbounded_send(msg.to_ttmessage()).unwrap();
     }
 
@@ -162,8 +204,8 @@ impl ChatServer {
         addr: SocketAddr,
         room: Arc<Mutex<Room>>,
         db: Arc<Mutex<DbRepo>>,
-    ) -> ShouldBan {
-        let room = room.lock().unwrap();
+    ) -> Banned {
+        let mut room = room.lock().unwrap();
 
         if let Some(passwd) = &room.passwd {
             if let Some(msg_passwd) = &msg.passwd {
@@ -174,8 +216,9 @@ impl ChatServer {
                             passwd: None,
                         },
                         peer_map.clone(),
-                        addr,
+                        &addr,
                     );
+                    return true;
                 }
             }
         }
@@ -191,7 +234,7 @@ impl ChatServer {
                             None,
                         )),
                         peer_map.clone(),
-                        Some(addr),
+                        Some(&addr),
                     );
                     db.lock().unwrap().messages.insert_one(text_msg).unwrap();
                 }
@@ -223,30 +266,30 @@ impl ChatServer {
                         .map(|msg| msg.unwrap())
                         .collect::<Vec<TextMessage>>();
 
+                    let mut users = peer_map
+                        .clone()
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|(_, (_, user))| user.clone().unwrap())
+                        .collect::<Vec<User>>()
+                        .clone();
+                    users.retain(|user| user.addr.unwrap() != addr);
+
                     Self::send_to_one(
-                        Message::from((
-                            ServerMsg::Sync {
-                                messages,
-                                users: peer_map
-                                    .clone()
-                                    .lock()
-                                    .unwrap()
-                                    .iter()
-                                    .map(|(_, (_, user))| user.clone().unwrap())
-                                    .collect(),
-                            },
-                            room.passwd.clone(),
-                        )),
+                        Message::from((ServerMsg::Sync { messages, users }, room.passwd.clone())),
                         peer_map.clone(),
-                        addr,
+                        &addr,
                     );
                 }
                 UserReqMsg::BanReq { addr } => {
                     Self::send_to_all(
                         Message::from((ServerMsg::BanConfirm { addr }, room.passwd.clone())),
-                        peer_map,
+                        peer_map.clone(),
                         None,
                     );
+
+                    room.banned_addrs.push(addr);
                     return true;
                 }
             },
@@ -256,4 +299,4 @@ impl ChatServer {
     }
 }
 
-type ShouldBan = bool;
+type Banned = bool;

@@ -65,12 +65,16 @@ mod test {
 
         let mut peermap = HashMap::<SocketAddr, User>::new();
 
-        let mut server = ChatServer::new(room.clone(), db).await.unwrap();
+        let server_room = room.clone();
+        let mut server = ChatServer::new(server_room, db).await.unwrap();
         server.run().await.unwrap();
+
         sleep(Duration::from_secs(1)).await;
+
         let mut client = ChatClient::new(room_, user.clone());
         client.connect().await.unwrap();
-        sleep(Duration::from_secs(1)).await;
+
+        sleep(Duration::from_millis(1)).await;
 
         if let MessageType::User(UserMsg::UserJoined { user: user_ }) =
             client.recv_msg().await.unwrap()
@@ -78,6 +82,8 @@ mod test {
             user.addr = user_.addr;
             peermap.insert(user.addr.unwrap(), user.clone());
             assert_eq!(user, user_)
+        } else {
+            assert!(false);
         }
 
         let sended_msg = TextMessage::new(&user.addr.unwrap(), &room._id, "some short message");
@@ -92,28 +98,31 @@ mod test {
             .await
             .unwrap();
 
-        assert!(server.running);
         let mut client2 = ChatClient::new(room2.clone(), user2.clone());
         client2.connect().await.unwrap();
 
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_millis(1)).await;
 
         if let MessageType::User(UserMsg::UserJoined { user: user_ }) =
             client2.recv_msg().await.unwrap()
         {
             user2.addr = user_.addr;
             peermap.insert(user.addr.unwrap(), user.clone());
+        } else {
+            assert!(false);
         }
 
         client2.sync().await.unwrap();
 
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_millis(1)).await;
 
         if let MessageType::Server(ServerMsg::Sync { messages, users }) =
             client2.recv_msg().await.unwrap()
         {
             assert_eq!(messages[0], sended_msg);
             assert_eq!(users[0], peermap.get(&user.addr.unwrap()).unwrap().clone());
+        } else {
+            assert!(false);
         }
 
         client2
@@ -126,10 +135,12 @@ mod test {
             .await
             .unwrap();
 
-        // sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_millis(1)).await;
 
         if let MessageType::User(UserMsg::Normal { msg }) = client.recv_msg().await.unwrap() {
             assert_eq!(msg, sended_msg);
+        } else {
+            assert!(false);
         }
 
         client2
@@ -142,10 +153,10 @@ mod test {
             .await
             .unwrap();
 
-        // sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_millis(1)).await;
 
         assert_eq!(
-            client.recv_msg().await.unwrap(),
+            client2.recv_msg().await.unwrap(),
             MessageType::Server(ServerMsg::AuthFailure)
         );
 
@@ -159,7 +170,7 @@ mod test {
             .await
             .unwrap();
 
-        // sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(1)).await;
 
         assert_eq!(
             client.recv_msg().await.unwrap(),
@@ -184,7 +195,5 @@ mod test {
 
         client.close_connection();
         client2.close_connection();
-
-        panic!("gowno");
     }
 }
