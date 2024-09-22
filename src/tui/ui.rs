@@ -83,17 +83,22 @@ impl<B: Backend> Tui<B> {
                     inner: Paragraph::new(
                         app.users
                             .iter()
-                            .map(|(_, user)| {
-                                Line::from(format!(
-                                    "{} [{}]",
-                                    user._id,
-                                    user.addr.unwrap().ip().to_string()
-                                ))
+                            .enumerate()
+                            .map(|(n, (_, user))| {
+                                if n < 10 - 2 {
+                                    Line::from(format!(
+                                        "{} [{}]",
+                                        user._id,
+                                        user.addr.unwrap().to_string()
+                                    ))
+                                } else {
+                                    Line::from("...")
+                                }
                             })
                             .collect::<Text>(),
                     ),
-                    width: 21,
-                    height: 5,
+                    width: 25,
+                    height: 25,
                 })
                 .style(app.style.block)
                 .border_set(border::ROUNDED)
@@ -128,7 +133,7 @@ pub struct StatefulArea<'a> {
 impl<'a> StatefulArea<'a> {
     const MAX_AREA_HEIGHT: u16 = 20;
 
-    pub fn new(style: ChatStyle, user_id: String) -> Self {
+    pub fn new(style: ChatStyle) -> Self {
         let mut textarea = TextArea::default();
         textarea.set_cursor_line_style(style.block);
         textarea.set_block(
@@ -138,12 +143,10 @@ impl<'a> StatefulArea<'a> {
                 .padding(Padding::new(2, 2, 1, 1))
                 .border_set(border::ROUNDED),
         );
-        textarea
-            .set_search_pattern(&format!(r"@{}", user_id))
-            .unwrap();
-        textarea.set_search_style(style.mentioning);
+        textarea.set_search_pattern(r"@\w+").unwrap();
+        textarea.set_search_style(style.block.reversed());
         textarea.set_placeholder_text("Start typing...");
-        textarea.set_placeholder_style(Style::new().fg(Color::Gray));
+        textarea.set_placeholder_style(Style::new().fg(Color::Gray).bg(style.block.bg.unwrap()));
 
         Self {
             textarea,
@@ -288,7 +291,7 @@ impl MsgItem {
     pub fn user_msg<'a>(
         text_msg: &TextMessage,
         user_color: impl Into<Color>,
-        content_color: impl Into<Color>,
+        chat_style: &ChatStyle,
         user_id: String,
         target_user: String,
     ) -> Text<'a> {
@@ -301,14 +304,13 @@ impl MsgItem {
         let content = highlight_text(
             text_msg.content.clone(),
             &format!(r"@{}", target_user),
-            Style::new().bg(Color::White).fg(Color::Black).bold(),
+            chat_style.block.reversed().bold(),
         );
 
-        let content_color_ = content_color.into();
         content
             .lines
             .into_iter()
-            .for_each(|line| text.push_line(line.fg(content_color_).not_bold()));
+            .for_each(|line| text.push_line(line.not_bold()));
         text.push_line("");
         text
     }
@@ -317,26 +319,15 @@ impl MsgItem {
 #[derive(Clone, Debug)]
 pub struct ChatStyle {
     pub block: Style,
-    pub msg_content: Style,
     pub msg_highlight: Style,
-    pub mentioning: Style,
 }
 
 impl ChatStyle {
-    pub fn new(block: Style, msg_content: Style, msg_highlight: Style, mentioning: Style) -> Self {
+    pub fn new(block: Style, msg_highlight: Style) -> Self {
         Self {
             block,
-            msg_content,
             msg_highlight,
-            mentioning,
         }
-    }
-
-    pub fn reverse_colors(&mut self) {
-        self.block = self.block.reversed();
-        self.msg_content = self.msg_content.reversed();
-        self.msg_highlight = self.msg_highlight.reversed();
-        self.mentioning = self.mentioning.reversed();
     }
 }
 

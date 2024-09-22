@@ -1,21 +1,19 @@
 use super::{
-    message::{Message, MessageType, UserMsg, UserReqMsg},
+    message::{Message, MessageType, ServerMsg, UserMsg, UserReqMsg},
     User,
 };
 use crate::schema::Room;
 use futures_util::{SinkExt, StreamExt};
 use std::{
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
 };
-use tokio::{
-    sync::mpsc::{self, error::SendError, Receiver, Sender},
-    task::JoinHandle,
-};
+use tokio::sync::mpsc::{self, error::SendError, Receiver, Sender};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Error as TtError, Message as TtMessage},
 };
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug)]
 pub struct ChatClient {
@@ -23,7 +21,8 @@ pub struct ChatClient {
     pub user: User,
     transceiver: Option<Sender<TtMessage>>,
     in_receiver: Option<Receiver<TtMessage>>,
-    event_loop_handlers: Option<(JoinHandle<()>, JoinHandle<()>)>,
+    finisher: CancellationToken,
+    pub is_ok: Arc<RwLock<bool>>,
 }
 
 impl ChatClient {
@@ -33,7 +32,8 @@ impl ChatClient {
             user,
             transceiver: None,
             in_receiver: None,
-            event_loop_handlers: None,
+            finisher: CancellationToken::new(),
+            is_ok: Arc::new(RwLock::new(true)),
         }
     }
 
@@ -60,16 +60,31 @@ impl ChatClient {
         self.transceiver = Some(tx);
         self.in_receiver = Some(rx_in);
 
-        let read_handler = tokio::spawn(async move {
+        let rcancel_token = self.finisher.child_token();
+        let wcancel_token = self.finisher.child_token();
+        let rcloned_is_ok = self.is_ok.clone();
+        let wcloned_is_ok = self.is_ok.clone();
+
+        tokio::spawn(async move {
             while let Some(msg) = read.next().await {
+                if rcancel_token.is_cancelled() {
+                    break;
+                }
                 match msg {
                     Ok(msg) => {
+                        // if let MessageType::Server(ServerMsg::ConnectionRefused) =
+                        //     Message::from(msg.clone()).msg_type
+                        // {
+                        //     *rcloned_is_ok.write().unwrap() = false;
+                        // }
                         if tx_in.send(msg).await.is_err() {
+                            *rcloned_is_ok.write().unwrap() = false;
                             eprintln!("Receiver dropped");
                             return;
                         }
                     }
                     Err(e) => {
+                        *rcloned_is_ok.write().unwrap() = false;
                         eprintln!("Error reading message: {}", e);
                         return;
                     }
@@ -77,28 +92,34 @@ impl ChatClient {
             }
         });
 
-        let write_handler = tokio::spawn(async move {
+        tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
+                if wcancel_token.is_cancelled() {
+                    break;
+                }
                 if let Err(e) = write.send(msg).await {
+                    *wcloned_is_ok.write().unwrap() = false;
                     eprintln!("Error sending message: {}", e);
                     return;
                 }
             }
         });
 
-        self.event_loop_handlers = Some((read_handler, write_handler));
-
         Ok(())
     }
 
     pub fn close_connection(&mut self) {
-        if let Some(ref handlers) = self.event_loop_handlers {
-            handlers.0.abort();
-            handlers.1.abort();
-        }
+        self.finisher.cancel();
+    }
+
+    pub fn is_ok(&self) -> bool {
+        *self.is_ok.read().unwrap()
     }
 
     pub async fn send_msg(&self, msg: Message) -> Result<(), SendError<TtMessage>> {
+        if !self.is_ok() {
+            return Ok(());
+        }
         if let Some(transceiver) = &self.transceiver {
             transceiver.send(msg.to_ttmessage()).await?
         }
@@ -106,6 +127,9 @@ impl ChatClient {
     }
 
     pub async fn recv_msg(&mut self) -> Option<MessageType> {
+        if !self.is_ok() {
+            return None;
+        }
         if let Some(ref mut receiver) = self.in_receiver {
             if receiver.is_empty() {
                 return None;

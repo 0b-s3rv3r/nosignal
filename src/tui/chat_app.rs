@@ -27,18 +27,17 @@ pub struct ChatApp<'a> {
 
 impl<'a> ChatApp<'a> {
     pub fn new(client: ChatClient, light_mode: bool) -> Self {
-        let mut style = ChatStyle::new(
-            Style::new().bg(Color::Rgb(0, 0, 0)).fg(Color::White),
-            Style::new().fg(Color::White),
-            Style::new().fg(Color::Yellow),
-            Style::new().fg(Color::Rgb(0, 0, 0)).bg(Color::White).bold(),
-        );
-
-        if light_mode {
-            style.reverse_colors();
-        }
-
-        let user_id = client.user._id.clone();
+        let style = if !light_mode {
+            ChatStyle::new(
+                Style::new().bg(Color::Rgb(0, 0, 0)).fg(Color::White),
+                Style::new().fg(Color::Yellow),
+            )
+        } else {
+            ChatStyle::new(
+                Style::new().bg(Color::White).fg(Color::Rgb(0, 0, 0)),
+                Style::new().fg(Color::Yellow),
+            )
+        };
 
         Self {
             running: true,
@@ -46,7 +45,7 @@ impl<'a> ChatApp<'a> {
             client,
             users: HashMap::new(),
             messages: StatefulList::default(),
-            msg_area: StatefulArea::new(style, user_id),
+            msg_area: StatefulArea::new(style),
             current_popup: PopupState::None,
             commands: vec![(Regex::new(r"/ban\s+(\S+)").unwrap(), Action::Ban)],
         }
@@ -58,7 +57,9 @@ impl<'a> ChatApp<'a> {
         tui.term_init()?;
 
         while self.running {
-            self.handle_msgs().await;
+            if self.client.is_ok() {
+                self.handle_msgs().await;
+            }
             tui.draw(self)?;
             self.handle_input().await?;
         }
@@ -155,7 +156,7 @@ impl<'a> ChatApp<'a> {
                 self.messages.items.push(MsgItem::user_msg(
                     &msg,
                     user.color.clone(),
-                    self.style.msg_content.fg.unwrap(),
+                    &self.style,
                     user._id.clone(),
                     self.client.user._id.clone(),
                 ));
@@ -173,12 +174,10 @@ impl<'a> ChatApp<'a> {
                         self.messages.items.push(MsgItem::user_msg(
                             &msg,
                             user.color.clone(),
-                            self.style.msg_content.fg.unwrap(),
+                            &self.style,
                             user._id.clone(),
                             self.client.user._id.clone(),
                         ));
-
-                        self.messages.select_last();
                     }
                     UserMsg::UserJoined { user } => {
                         if user._id == self.client.user._id {
@@ -191,14 +190,20 @@ impl<'a> ChatApp<'a> {
                             Color::Rgb(50, 50, 50).into(),
                         ));
 
-                        self.client.sync().await.unwrap();
-
-                        self.messages.select_last();
+                        if self.client.user._id == user._id {
+                            self.client.sync().await.unwrap();
+                        }
                     }
                 },
                 MessageType::Server(server_msg) => match server_msg {
-                    ServerMsg::AuthFailure => panic!("Authentication failure"),
                     ServerMsg::Sync { messages, users } => {
+                        self.users.extend(
+                            users
+                                .into_iter()
+                                .map(|user| (user.addr.unwrap(), user))
+                                .collect::<HashMap<SocketAddr, User>>(),
+                        );
+
                         self.messages.items.append(
                             &mut messages
                                 .iter()
@@ -207,54 +212,52 @@ impl<'a> ChatApp<'a> {
                                     MsgItem::user_msg(
                                         &msg,
                                         user.color.clone(),
-                                        self.style.msg_content.fg.unwrap(),
+                                        &self.style,
                                         user._id.clone(),
                                         self.client.user._id.clone(),
                                     )
                                 })
                                 .collect::<Vec<Text>>(),
                         );
-
-                        self.users.extend(
-                            users
-                                .into_iter()
-                                .map(|user| (user.addr.unwrap(), user))
-                                .collect::<HashMap<SocketAddr, User>>(),
-                        );
-
-                        self.messages.select_last();
                     }
                     ServerMsg::UserLeft { addr } => {
                         self.messages.items.push(MsgItem::info_msg(
                             format!("{} has left", self.users.get(&addr).unwrap()._id),
                             Color::Rgb(50, 50, 50).into(),
                         ));
-                        self.messages.select_last();
                     }
                     ServerMsg::BanConfirm { addr } => {
-                        self.client.room.lock().unwrap().banned_addrs.push(addr);
+                        if addr == self.client.user.addr.unwrap() {
+                            self.client.close_connection();
+                            *self.client.is_ok.write().unwrap() = false;
+                            self.running = false;
+                            // log about ban
+                        } else {
+                            self.client.room.lock().unwrap().banned_addrs.push(addr); // this
+                                                                                      // shouldn't be here
 
-                        self.messages.items.push(MsgItem::info_msg(
-                            format!("{} has been banned", self.users.get(&addr).unwrap()._id),
-                            Color::Rgb(50, 50, 50).into(),
-                        ));
-
-                        self.messages.select_last();
-                    }
-                    ServerMsg::ConnectionRefused => {
-                        panic!("You has been banned from this server!");
+                            self.messages.items.push(MsgItem::info_msg(
+                                format!("{} has been banned", self.users.get(&addr).unwrap()._id),
+                                Color::Rgb(50, 50, 50).into(),
+                            ));
+                        }
                     }
                     ServerMsg::ServerShutdown => {
                         self.client.close_connection();
+                        *self.client.is_ok.write().unwrap() = false;
 
                         self.messages.items.push(MsgItem::info_msg(
                             String::from("Server has been shutted down."),
                             Color::Rgb(50, 50, 50).into(),
                         ));
                     }
+                    _ => {}
                 },
-                _ => (),
+                _ => {}
             }
+        }
+        if !self.messages.is_highlighted {
+            self.messages.select_last();
         }
     }
 
@@ -273,9 +276,11 @@ impl<'a> ChatApp<'a> {
                 match command.1 {
                     Action::Ban => {
                         if let Some(user_addr) =
-                            self.users.iter().find(|(_, user)| user._id == args[0])
+                            self.users.iter().find(|(_, user)| user._id == args[1])
                         {
+                            // if self.client.room.lock().unwrap().is_owner {
                             self.client.ban(&user_addr.1.addr.unwrap()).await.unwrap();
+                            // }
                         }
                     }
                 }

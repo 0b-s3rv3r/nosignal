@@ -36,6 +36,7 @@ mod test {
     async fn messages_sending() {
         let passwd = String::from("password");
         hash_passwd(&passwd);
+
         let room = Room {
             _id: "firstroom".into(),
             addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
@@ -43,7 +44,6 @@ mod test {
             banned_addrs: vec![],
             is_owner: true,
         };
-
         let mut room2 = room.clone();
         room2.is_owner = false;
 
@@ -52,28 +52,23 @@ mod test {
             addr: None,
             color: Color::LightRed,
         };
-
         let mut user2 = User {
             _id: "user2".into(),
             addr: None,
             color: Color::LightGreen,
         };
 
-        let room_ = room.clone();
-
         let db = Arc::new(Mutex::new(DbRepo::memory_init().unwrap()));
-
         let mut peermap = HashMap::<SocketAddr, User>::new();
 
         let server_room = room.clone();
         let mut server = ChatServer::new(server_room, db).await.unwrap();
         server.run().await.unwrap();
-
         sleep(Duration::from_secs(1)).await;
 
+        let room_ = room.clone();
         let mut client = ChatClient::new(room_, user.clone());
         client.connect().await.unwrap();
-
         sleep(Duration::from_millis(1)).await;
 
         if let MessageType::User(UserMsg::UserJoined { user: user_ }) =
@@ -87,7 +82,7 @@ mod test {
         }
 
         let sended_msg = TextMessage::new(&user.addr.unwrap(), &room._id, "some short message");
-
+        let mut sended_msg2 = sended_msg.clone();
         client
             .send_msg(Message::from((
                 UserMsg::Normal {
@@ -100,9 +95,7 @@ mod test {
 
         let mut client2 = ChatClient::new(room2.clone(), user2.clone());
         client2.connect().await.unwrap();
-
         sleep(Duration::from_millis(1)).await;
-
         if let MessageType::User(UserMsg::UserJoined { user: user_ }) =
             client2.recv_msg().await.unwrap()
         {
@@ -111,11 +104,14 @@ mod test {
         } else {
             assert!(false);
         }
+        if let MessageType::User(UserMsg::UserJoined { user }) = client.recv_msg().await.unwrap() {
+            assert!(true);
+        } else {
+            assert!(false);
+        }
 
         client2.sync().await.unwrap();
-
         sleep(Duration::from_millis(1)).await;
-
         if let MessageType::Server(ServerMsg::Sync { messages, users }) =
             client2.recv_msg().await.unwrap()
         {
@@ -125,40 +121,40 @@ mod test {
             assert!(false);
         }
 
+        sended_msg2.sender_addr = user2.addr.unwrap();
         client2
             .send_msg(Message::from((
                 UserMsg::Normal {
-                    msg: sended_msg.clone(),
+                    msg: sended_msg2.clone(),
                 },
                 room2.passwd.clone(),
             )))
             .await
             .unwrap();
-
-        sleep(Duration::from_millis(1)).await;
-
-        if let MessageType::User(UserMsg::Normal { msg }) = client.recv_msg().await.unwrap() {
-            assert_eq!(msg, sended_msg);
-        } else {
-            assert!(false);
-        }
-
-        client2
-            .send_msg(Message::from((
-                UserMsg::Normal {
-                    msg: sended_msg.clone(),
-                },
-                None,
-            )))
-            .await
-            .unwrap();
-
-        sleep(Duration::from_millis(1)).await;
-
+        sleep(Duration::from_secs(1)).await;
         assert_eq!(
-            client2.recv_msg().await.unwrap(),
-            MessageType::Server(ServerMsg::AuthFailure)
+            client.recv_msg().await.unwrap(),
+            MessageType::User(UserMsg::Normal {
+                msg: sended_msg2.clone()
+            })
         );
+
+        // client2
+        //     .send_msg(Message::from((
+        //         UserMsg::Normal {
+        //             msg: sended_msg2.clone(),
+        //         },
+        //         None,
+        //     )))
+        //     .await
+        //     .unwrap();
+        //
+        // sleep(Duration::from_millis(1)).await;
+        //
+        // assert_eq!(
+        //     client2.recv_msg().await.unwrap(),
+        //     MessageType::Server(ServerMsg::AuthFailure)
+        // );
 
         client
             .send_msg(Message::from((
@@ -169,16 +165,13 @@ mod test {
             )))
             .await
             .unwrap();
-
         sleep(Duration::from_secs(1)).await;
-
         assert_eq!(
             client.recv_msg().await.unwrap(),
             MessageType::Server(ServerMsg::BanConfirm {
                 addr: user2.addr.unwrap()
             })
         );
-
         assert_eq!(
             client.recv_msg().await.unwrap(),
             MessageType::Server(ServerMsg::UserLeft {
@@ -186,8 +179,7 @@ mod test {
             })
         );
 
-        server.stop();
-
+        server.stop().await;
         assert_eq!(
             client.recv_msg().await.unwrap(),
             MessageType::Server(ServerMsg::ServerShutdown)

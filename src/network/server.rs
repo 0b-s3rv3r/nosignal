@@ -16,6 +16,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
+    io::AsyncWriteExt,
     net::{TcpListener, TcpStream},
     time::sleep,
 };
@@ -59,18 +60,16 @@ impl ChatServer {
 
             let accepting_task = tokio::spawn(async move {
                 let cloned_token_ = cloned_token_.clone();
-
                 let listener = TcpListener::bind(&addr).await.unwrap();
 
                 while !cloned_token_.is_cancelled() {
                     tokio::select! {
                         accept_result = listener.accept() => {
                             match accept_result {
-                                Ok((stream, addr)) => {
-                                    // println!("new user {}", addr.clone());
-                                    // let is_banned = room.clone().lock().unwrap().banned_addrs.iter().any(|&banned| banned != addr );
-                                    //
-                                    // if !is_banned {
+                                Ok((mut stream, addr)) => {
+                                    let banned = room.clone().lock().unwrap().banned_addrs.iter().any(|&banned| banned != addr );
+
+                                    if !banned {
                                         tokio::spawn(Self::handle_conection(
                                             peer_map.clone(),
                                             stream,
@@ -79,9 +78,9 @@ impl ChatServer {
                                             db.clone(),
                                             cloned_token_.clone(),
                                         ));
-                                    // } else {
-                                    //     Self::send_to_one(Message::from((ServerMsg::ConnectionRefused, None)), peer_map.clone(), addr.clone());
-                                    // }
+                                    } else {
+                                        stream.write(&Message::from((ServerMsg::ConnectionRefused, None)).to_ttmessage().to_string().as_bytes()).await.unwrap();
+                                    }
                                 }
                                 Err(e) => {
                                     eprintln!("Failed to accept connection: {}", e);
@@ -105,15 +104,14 @@ impl ChatServer {
         Ok(())
     }
 
-    pub fn stop(&mut self) {
-        // Self::send_to_all(
-        //     Message::from((ServerMsg::ServerShutdown, None)),
-        //     self.peer_map.clone(),
-        //     None,
-        // );
-        // println!("shutdown msg sent");
+    pub async fn stop(&mut self) {
+        Self::send_to_all(
+            Message::from((ServerMsg::ServerShutdown, None)),
+            self.peer_map.clone(),
+            None,
+        );
 
-        // sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(1)).await;
 
         self.finisher.cancel();
     }
@@ -126,7 +124,6 @@ impl ChatServer {
         db: Db,
         finisher: CancellationToken,
     ) -> Result<(), TtError> {
-        // println!("connection with: {}", addr.clone());
         let ws_stream = accept_async(stream).await?;
 
         let (tx, rx) = unbounded();
@@ -135,15 +132,23 @@ impl ChatServer {
         let (outgoing, incoming) = ws_stream.split();
 
         let broadcast_incoming = incoming.try_for_each(|msg| {
-            if Self::handle_message(
+            Self::handle_message(
                 Message::from(msg),
                 peer_map.clone(),
                 addr,
                 room.clone(),
                 db.clone(),
-            ) {
-                return future::err(TtError::ConnectionClosed);
-            }
+            );
+
+            // if let Some(_) = room
+            //     .lock()
+            //     .unwrap()
+            //     .banned_addrs
+            //     .iter()
+            //     .find(|&&a| a == addr)
+            // {
+            //     return future::err(TtError::ConnectionClosed);
+            // }
 
             future::ok(())
         });
@@ -204,7 +209,7 @@ impl ChatServer {
         addr: SocketAddr,
         room: Arc<Mutex<Room>>,
         db: Arc<Mutex<DbRepo>>,
-    ) -> Banned {
+    ) {
         let mut room = room.lock().unwrap();
 
         if let Some(passwd) = &room.passwd {
@@ -218,7 +223,6 @@ impl ChatServer {
                         peer_map.clone(),
                         &addr,
                     );
-                    return true;
                 }
             }
         }
@@ -282,21 +286,21 @@ impl ChatServer {
                         &addr,
                     );
                 }
-                UserReqMsg::BanReq { addr } => {
+                UserReqMsg::BanReq { addr: banned_addr } => {
                     Self::send_to_all(
-                        Message::from((ServerMsg::BanConfirm { addr }, room.passwd.clone())),
+                        Message::from((
+                            ServerMsg::BanConfirm { addr: banned_addr },
+                            room.passwd.clone(),
+                        )),
                         peer_map.clone(),
                         None,
                     );
 
-                    room.banned_addrs.push(addr);
-                    return true;
+                    room.banned_addrs.push(banned_addr);
+                    peer_map.lock().unwrap().remove(&banned_addr);
                 }
             },
-            _ => (),
+            _ => {}
         }
-        false
     }
 }
-
-type Banned = bool;
