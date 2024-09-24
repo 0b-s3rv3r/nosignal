@@ -1,5 +1,5 @@
 use argon2::{password_hash::Salt, Argon2, PasswordHasher};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use dirs::data_dir;
 use fern::Dispatch;
 use humantime::format_rfc3339_seconds;
@@ -74,7 +74,8 @@ pub fn setup_logger(log_path: &Path) -> Result<(), fern::InitError> {
 }
 
 pub fn systime_to_string(time: SystemTime) -> String {
-    DateTime::<Utc>::from(time)
-        .format("%Y-%m-%d %H:%M")
-        .to_string()
+    let local = Local::now();
+    let offset = local.offset();
+    let tz_time = DateTime::<Utc>::from(time) + *offset;
+    tz_time.format("%Y-%m-%d %H:%M").to_string()
 }

@@ -13,7 +13,7 @@ use std::{
     io,
     net::SocketAddr,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use tokio::{
     io::AsyncWriteExt,
@@ -229,7 +229,8 @@ impl ChatServer {
 
         match msg.msg_type {
             MessageType::User(user_msg) => match user_msg {
-                UserMsg::Normal { msg: text_msg, .. } => {
+                UserMsg::Normal { msg: mut text_msg } => {
+                    text_msg.timestamp = Some(SystemTime::now());
                     Self::send_to_all(
                         Message::from((
                             UserMsg::Normal {

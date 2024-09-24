@@ -64,7 +64,7 @@ async fn main() -> io::Result<()> {
 
             sleep(Duration::from_secs(1)).await;
 
-            let mut app = ChatApp::new(client, true);
+            let mut app = ChatApp::new(client, false);
             app.run().await?;
 
             server.stop().await;

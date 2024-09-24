@@ -1,4 +1,5 @@
 use crate::{
+    network::message::UserMsg,
     schema::{Color as ChatColor, TextMessage},
     tui::chat_app::ChatApp,
     util::systime_to_string,
@@ -15,7 +16,7 @@ use ratatui::{
     widgets::*,
 };
 use regex::Regex;
-use std::io;
+use std::{io, usize};
 use tui_pattern_highlighter::highlight_text;
 use tui_popup::{Popup, SizedWrapper};
 use tui_textarea::{CursorMove, Input, TextArea};
@@ -86,11 +87,21 @@ impl<B: Backend> Tui<B> {
                             .enumerate()
                             .map(|(n, (_, user))| {
                                 if n < 10 - 2 {
-                                    Line::from(format!(
-                                        "{} [{}]",
-                                        user._id,
-                                        user.addr.unwrap().to_string()
-                                    ))
+                                    if user.addr.unwrap() == app.client.user.addr.unwrap() {
+                                        Line::from(format!(
+                                            "*{} [{}]",
+                                            user._id,
+                                            user.addr.unwrap().to_string()
+                                        ))
+                                        .fg(user.color.clone())
+                                    } else {
+                                        Line::from(format!(
+                                            "{} [{}]",
+                                            user._id,
+                                            user.addr.unwrap().to_string()
+                                        ))
+                                        .fg(user.color.clone())
+                                    }
                                 } else {
                                     Line::from("...")
                                 }
@@ -102,7 +113,7 @@ impl<B: Backend> Tui<B> {
                 })
                 .style(app.style.block)
                 .border_set(border::ROUNDED)
-                .title("users list");
+                .title("users");
                 frame.render_widget(&user_list_popup, frame.size());
             }
             _ => (),
@@ -164,21 +175,27 @@ impl<'a> StatefulArea<'a> {
     fn move_last_word_to_new_line(&mut self) {
         let line = self.textarea.lines()[self.textarea.cursor().0].clone();
 
+        let mut insert_nl = false;
         if line.len() >= (self.width - 6).into() {
             let rlines: String = line.chars().rev().collect();
             if let Some(caps) = Regex::new(r"\S+").unwrap().captures(&rlines) {
                 let cap = caps.get(0).unwrap();
                 if cap.start() == 0 {
-                    self.textarea.delete_word();
-                    self.textarea.insert_newline();
                     let rword: String = cap.as_str().chars().rev().collect();
-                    self.textarea.insert_str(&rword);
+                    if rword.len() >= (self.width - 6).into() {
+                        self.textarea.delete_char();
+                    } else {
+                        self.textarea.delete_word();
+                        self.textarea.insert_newline();
+                        self.textarea.insert_str(&rword);
+                        insert_nl = true;
+                    }
                 } else {
                     self.textarea.delete_char();
                 }
             }
 
-            if self.height <= Self::MAX_AREA_HEIGHT && !line.ends_with(' ') {
+            if self.height <= Self::MAX_AREA_HEIGHT && insert_nl {
                 self.height += 1;
             }
         }
@@ -297,9 +314,15 @@ impl MsgItem {
     ) -> Text<'a> {
         let mut text = Text::from(Line::from(vec![
             Span::from(user_id.clone()).style(Style::new().bold().fg(user_color.into())),
-            Span::from(format!(" {}", systime_to_string(text_msg.timestamp)))
-                .fg(Color::Rgb(50, 50, 50))
-                .italic(),
+            Span::from(format!(" {}", {
+                if let Some(ts) = text_msg.timestamp {
+                    systime_to_string(ts)
+                } else {
+                    "unknown timestamp".to_string()
+                }
+            }))
+            .fg(Color::Rgb(50, 50, 50))
+            .italic(),
         ]));
         let content = highlight_text(
             text_msg.content.clone(),

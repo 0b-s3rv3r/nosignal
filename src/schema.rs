@@ -3,8 +3,6 @@ use ratatui::style::Color as ratColor;
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, time::SystemTime};
 
-use crate::network::User;
-
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Room {
     pub _id: String,
@@ -19,7 +17,7 @@ pub struct TextMessage {
     pub room_id: String,
     pub sender_addr: SocketAddr,
     pub content: String,
-    pub timestamp: SystemTime,
+    pub timestamp: Option<SystemTime>,
 }
 
 impl TextMessage {
@@ -28,7 +26,7 @@ impl TextMessage {
             sender_addr: *user_addr,
             room_id: room_id.into(),
             content: msg.into(),
-            timestamp: SystemTime::now(),
+            timestamp: Some(SystemTime::now()),
         }
     }
 }

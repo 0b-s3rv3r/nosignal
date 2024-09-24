@@ -111,9 +111,18 @@ impl<'a> ChatApp<'a> {
                         self.handle_text_buffer().await;
                     }
                     KeyCode::Char('l') if modifiers.contains(KeyModifiers::CONTROL) => {
-                        self.current_popup = PopupState::List;
+                        if self.current_popup == PopupState::List {
+                            self.current_popup = PopupState::None;
+                        } else {
+                            self.current_popup = PopupState::List;
+                        }
                     }
                     KeyCode::Char('h') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        if self.current_popup == PopupState::Help {
+                            self.current_popup = PopupState::None;
+                        } else {
+                            self.current_popup = PopupState::None;
+                        }
                         self.current_popup = PopupState::Help;
                     }
                     KeyCode::Char('y') if modifiers.contains(KeyModifiers::CONTROL) => {
@@ -160,7 +169,6 @@ impl<'a> ChatApp<'a> {
                     user._id.clone(),
                     self.client.user._id.clone(),
                 ));
-                self.messages.select_last();
             }
         }
     }
