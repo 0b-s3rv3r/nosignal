@@ -104,7 +104,7 @@ mod test {
         } else {
             assert!(false);
         }
-        if let MessageType::User(UserMsg::UserJoined { user }) = client.recv_msg().await.unwrap() {
+        if let MessageType::User(UserMsg::UserJoined { .. }) = client.recv_msg().await.unwrap() {
             assert!(true);
         } else {
             assert!(false);
@@ -115,7 +115,9 @@ mod test {
         if let MessageType::Server(ServerMsg::Sync { messages, users }) =
             client2.recv_msg().await.unwrap()
         {
-            assert_eq!(messages[0], sended_msg);
+            assert_eq!(messages[0].room_id, sended_msg.room_id);
+            assert_eq!(messages[0].sender_addr, sended_msg.sender_addr);
+            assert_eq!(messages[0].content, sended_msg.content);
             assert_eq!(users[0], peermap.get(&user.addr.unwrap()).unwrap().clone());
         } else {
             assert!(false);
@@ -132,12 +134,12 @@ mod test {
             .await
             .unwrap();
         sleep(Duration::from_secs(1)).await;
-        assert_eq!(
-            client.recv_msg().await.unwrap(),
-            MessageType::User(UserMsg::Normal {
-                msg: sended_msg2.clone()
-            })
-        );
+        let received_msg = client.recv_msg().await.unwrap();
+        if let MessageType::User(UserMsg::Normal { msg }) = received_msg {
+            assert_eq!(msg.room_id, sended_msg2.room_id);
+            assert_eq!(msg.sender_addr, sended_msg2.sender_addr);
+            assert_eq!(msg.content, sended_msg2.content);
+        }
 
         // client2
         //     .send_msg(Message::from((

@@ -3,6 +3,7 @@ use chrono::{DateTime, Local, Utc};
 use dirs::data_dir;
 use fern::Dispatch;
 use humantime::format_rfc3339_seconds;
+use log::{self, LevelFilter};
 use std::{
     fs::create_dir_all,
     io::{self, Write},
@@ -54,7 +55,7 @@ pub fn create_env_dir(dir_name: &str) -> Result<PathBuf, io::Error> {
     Ok(dir_path)
 }
 
-pub fn setup_logger(log_path: &Path) -> Result<(), fern::InitError> {
+pub fn setup_logger(log_path: Option<&Path>) -> Result<(), fern::InitError> {
     Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -65,9 +66,35 @@ pub fn setup_logger(log_path: &Path) -> Result<(), fern::InitError> {
                 message
             ))
         })
-        .level(log::LevelFilter::Error)
-        .chain(std::io::stdout())
-        .chain(fern::log_file(&log_path)?)
+        .chain(if let Some(log_path) = log_path {
+            Dispatch::new()
+                .level(LevelFilter::Error)
+                .chain(fern::Panic)
+                .chain(std::io::stdout())
+                .chain(fern::log_file(&log_path)?)
+        } else {
+            Dispatch::new()
+                .level(LevelFilter::Error)
+                .chain(fern::Panic)
+                .chain(std::io::stdout())
+        })
+        .chain(if let Some(log_path) = log_path {
+            Dispatch::new()
+                .level(LevelFilter::Warn)
+                .chain(std::io::stdout())
+                .chain(fern::log_file(&log_path)?)
+        } else {
+            Dispatch::new()
+                .level(LevelFilter::Warn)
+                .chain(std::io::stdout())
+        })
+        .chain(if let Some(log_path) = log_path {
+            Dispatch::new()
+                .level(LevelFilter::Info)
+                .chain(fern::log_file(&log_path)?)
+        } else {
+            Dispatch::new().level(LevelFilter::Info)
+        })
         .apply()?;
 
     Ok(())

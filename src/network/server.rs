@@ -6,8 +6,10 @@ use crate::{
     db::DbRepo,
     schema::{Room, TextMessage},
 };
+use futures::SinkExt;
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::{future, pin_mut, StreamExt, TryStreamExt};
+use log::{error, warn};
 use std::{
     collections::HashMap,
     io,
@@ -60,13 +62,17 @@ impl ChatServer {
 
             let accepting_task = tokio::spawn(async move {
                 let cloned_token_ = cloned_token_.clone();
-                let listener = TcpListener::bind(&addr).await.unwrap();
+                let listener_result = TcpListener::bind(&addr).await;
+                if let Err(err) = &listener_result {
+                    error!("{}", err);
+                }
+                let listener = listener_result.unwrap();
 
                 while !cloned_token_.is_cancelled() {
                     tokio::select! {
                         accept_result = listener.accept() => {
                             match accept_result {
-                                Ok((mut stream, addr)) => {
+                                Ok((stream, addr)) => {
                                     let banned = room.clone().lock().unwrap().banned_addrs.iter().any(|&banned| banned != addr );
 
                                     if !banned {
@@ -79,11 +85,13 @@ impl ChatServer {
                                             cloned_token_.clone(),
                                         ));
                                     } else {
-                                        stream.write(&Message::from((ServerMsg::ConnectionRefused, None)).to_ttmessage().to_string().as_bytes()).await.unwrap();
+                                        let ws_stream = accept_async(stream).await.unwrap();
+                                        let (mut outgoing, _) = ws_stream.split();
+                                        _ = outgoing.send(Message::from((ServerMsg::ConnectionRefused, None)).to_ttmessage());
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("Failed to accept connection: {}", e);
+                                    warn!("Failed to accept connection: {}", e);
                                 }
                             }
                         }
@@ -110,10 +118,10 @@ impl ChatServer {
             self.peer_map.clone(),
             None,
         );
-
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_millis(500)).await;
 
         self.finisher.cancel();
+        self.finalize();
     }
 
     async fn handle_conection(
@@ -140,15 +148,15 @@ impl ChatServer {
                 db.clone(),
             );
 
-            // if let Some(_) = room
-            //     .lock()
-            //     .unwrap()
-            //     .banned_addrs
-            //     .iter()
-            //     .find(|&&a| a == addr)
-            // {
-            //     return future::err(TtError::ConnectionClosed);
-            // }
+            if let Some(_) = room
+                .lock()
+                .unwrap()
+                .banned_addrs
+                .iter()
+                .find(|&&a| a == addr)
+            {
+                return future::err(TtError::ConnectionClosed);
+            }
 
             future::ok(())
         });
@@ -191,7 +199,9 @@ impl ChatServer {
             .map(|(_, ws_sink)| ws_sink);
 
         for (recp, _) in broadcast_recipients {
-            recp.unbounded_send(msg.to_ttmessage()).unwrap();
+            if let Err(err) = recp.unbounded_send(msg.to_ttmessage()) {
+                warn!("{}", err);
+            }
         }
     }
 
@@ -200,7 +210,9 @@ impl ChatServer {
             let peers = peer_map.lock().unwrap();
             peers.get(&addr).unwrap().0.clone()
         };
-        recp.unbounded_send(msg.to_ttmessage()).unwrap();
+        if let Err(err) = recp.unbounded_send(msg.to_ttmessage()) {
+            warn!("{}", err);
+        }
     }
 
     fn handle_message(
@@ -302,6 +314,18 @@ impl ChatServer {
                 }
             },
             _ => {}
+        }
+    }
+
+    fn finalize(&self) {
+        if let Err(err) = self
+            .db
+            .lock()
+            .unwrap()
+            .rooms
+            .insert_one(self.room.lock().unwrap().to_owned())
+        {
+            error!("{}", err);
         }
     }
 }

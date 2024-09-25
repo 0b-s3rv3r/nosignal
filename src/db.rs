@@ -1,4 +1,6 @@
 use crate::schema::{LocalData, Room, TextMessage};
+use bson::doc;
+use log::{error, warn};
 use polodb_core::{Collection, Database, Result as pdbResult};
 use std::path::Path;
 
@@ -21,7 +23,7 @@ impl DbRepo {
         })
     }
 
-    pub(crate) fn memory_init() -> pdbResult<Self> {
+    pub fn memory_init() -> pdbResult<Self> {
         let db = Database::open_memory()?;
 
         Ok(DbRepo {
@@ -31,4 +33,19 @@ impl DbRepo {
             _db: db,
         })
     }
+
+    // pub fn room_update(&self, room: &Room) {
+    //     if let Err(err) = self.rooms.update_one(
+    //         doc! {
+    //             "_id": room._id.clone()
+    //         },
+    //         doc! {
+    //             "$set": doc! {
+    //                 "banned_addrs": room.banned_addrs,
+    //             }
+    //         },
+    //     ) {
+    //         error!("{}", err);
+    //     }
+    // }
 }

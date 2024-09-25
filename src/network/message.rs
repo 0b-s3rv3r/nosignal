@@ -96,6 +96,18 @@ impl From<TtMessage> for Message {
     }
 }
 
+impl TryFrom<&TtMessage> for Message {
+    type Error = ();
+
+    fn try_from(value: &TtMessage) -> Result<Self, Self::Error> {
+        if let Ok(val) = from_str(&value.to_string()) {
+            val
+        } else {
+            Err(())
+        }
+    }
+}
+
 impl Message {
     pub fn to_ttmessage(&self) -> TtMessage {
         TtMessage::text(to_string(self).unwrap())

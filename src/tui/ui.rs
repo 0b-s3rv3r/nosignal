@@ -1,5 +1,4 @@
 use crate::{
-    network::message::UserMsg,
     schema::{Color as ChatColor, TextMessage},
     tui::chat_app::ChatApp,
     util::systime_to_string,
@@ -22,7 +21,7 @@ use tui_popup::{Popup, SizedWrapper};
 use tui_textarea::{CursorMove, Input, TextArea};
 
 const HELP_POPUP_CONTENT: &str =
-    "[ctrl+l] user list\n[ctrl+j] scroll down\n[ctrl+j] scroll up\n[ctrl+q] exit";
+    "[ctrl+q] exit\n[ctrl+l] user list\n[ctrl+j] scroll down\n[ctrl+k] scroll up\n[/ban <username>] ban user\n[@<username>] mention";
 
 #[derive(Debug)]
 pub struct Tui<B: Backend> {
@@ -71,8 +70,8 @@ impl<B: Backend> Tui<B> {
                 let popup_content = Paragraph::new(Text::from(HELP_POPUP_CONTENT));
                 let help_popup = Popup::new(SizedWrapper {
                     inner: popup_content,
-                    width: 21,
-                    height: 5,
+                    width: 27,
+                    height: 6,
                 })
                 .style(app.style.block)
                 .border_set(border::ROUNDED)
@@ -89,7 +88,7 @@ impl<B: Backend> Tui<B> {
                                 if n < 10 - 2 {
                                     if user.addr.unwrap() == app.client.user.addr.unwrap() {
                                         Line::from(format!(
-                                            "*{} [{}]",
+                                            "{} [{}]*",
                                             user._id,
                                             user.addr.unwrap().to_string()
                                         ))

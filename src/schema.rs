@@ -1,7 +1,7 @@
 use enum_stringify::EnumStringify;
 use ratatui::style::Color as ratColor;
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, time::SystemTime};
+use std::{net::SocketAddr, time::SystemTime, usize};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Room {
@@ -33,9 +33,10 @@ impl TextMessage {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalData {
-    pub default_user_id: String,
-    pub default_room_addr: SocketAddr,
-    pub default_color: Color,
+    pub id: usize,
+    pub user_id: String,
+    pub room_addr: SocketAddr,
+    pub color: Color,
     pub light_mode: bool,
 }
 

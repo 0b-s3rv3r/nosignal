@@ -8,6 +8,7 @@ use clap::{Arg, ArgMatches, Command};
 use crossterm::style::Stylize;
 use polodb_core::{bson::doc, Result as pdbResult};
 use std::{
+    any::Any,
     env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::Path,
@@ -18,7 +19,7 @@ pub fn run(cmd_req: CommandRequest, open_memory: bool) -> Result<(), AppError> {
     let path = create_env_dir("kioto")?;
 
     let log_path = path.join("errors.log");
-    setup_logger(&log_path).expect(format!("{}", "Failed to set up logger.".red()).as_str());
+    setup_logger(Some(&log_path)).expect(format!("{}", "Failed to set up logger.".red()).as_str());
 
     let mut db = if open_memory {
         db_init(None)?
@@ -61,9 +62,10 @@ pub fn db_init(db_path: Option<&Path>) -> pdbResult<DbRepo> {
 
     if db.local_data.count_documents()? == 0 {
         db.local_data.insert_one(&LocalData {
-            default_user_id: get_unique_id(),
-            default_room_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 12345),
-            default_color: Color::White,
+            id: 0,
+            user_id: get_unique_id(),
+            room_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 12345),
+            color: Color::White,
             light_mode: false,
         })?;
     }
@@ -77,7 +79,7 @@ fn create_room(
     room_ip: Option<String>,
     password: bool,
 ) -> Result<(), AppError> {
-    if db.rooms.find_one(doc! {"id": room_id})?.is_some() {
+    if db.rooms.find_one(doc! {"_id": room_id})?.is_some() {
         return Err(AppError::AlreadyExistingId);
     }
 
@@ -87,7 +89,7 @@ fn create_room(
             db.local_data
                 .find_one(None)?
                 .ok_or(AppError::DataNotFound)?
-                .default_room_addr
+                .room_addr
         }
     };
 
@@ -130,7 +132,7 @@ fn list_rooms_and_local_data(db: &DbRepo) -> Result<(), AppError> {
     let mut rooms = db.rooms.find(None)?;
     if !rooms.any(|el| {
         let room = el.unwrap();
-        println!("{}: {}", room._id, room.addr);
+        println!("{}: {}", room._id, room.addr.to_string());
         true
     }) {
         return Err(AppError::NoAnyRoom);
@@ -144,12 +146,12 @@ fn join_room(
     username: Option<String>,
     color: Option<Color>,
 ) -> Result<(), AppError> {
-    todo!("if there is no such id then join, but store info temporary")
+    todo!("if there is no such id then join, then store info temporary")
 }
 
 fn set_local_data(db: &DbRepo, option: &str, value: &str) -> Result<(), AppError> {
     db.local_data.update_one(
-        doc! {},
+        doc! {"id": 0},
         doc! {"$set": doc! {
             option: value
         }},
@@ -420,24 +422,45 @@ mod test {
     }
 
     #[test]
-    fn local_data_update() {
+    fn local_data_default_init() {
         let db = db_init(None).unwrap();
 
         let local_data = LocalData {
-            default_user_id: "*".into(),
-            default_room_addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
-            default_color: Color::White,
+            id: 0,
+            user_id: "*".into(),
+            room_addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
+            color: Color::White,
             light_mode: false,
         };
 
         let local_data_from_db = db.local_data.find_one(None).unwrap().unwrap();
 
-        assert_eq!(
-            local_data_from_db.default_room_addr,
-            local_data.default_room_addr
-        );
-        assert_eq!(local_data_from_db.default_color, local_data.default_color);
+        assert_eq!(local_data_from_db.room_addr, local_data.room_addr);
+        assert_eq!(local_data_from_db.color, local_data.color);
         assert_eq!(local_data_from_db.light_mode, local_data.light_mode);
+    }
+
+    #[test]
+    fn local_data_setting() {
+        let db = db_init(None).unwrap();
+
+        run_option(
+            CommandRequest::Set {
+                option: "user_id".to_owned(),
+                value: "someuser".to_owned(),
+            },
+            &db,
+        )
+        .unwrap();
+
+        assert_eq!(
+            db.local_data
+                .find_one(doc! {"id": 0})
+                .unwrap()
+                .unwrap()
+                .user_id,
+            "someuser"
+        );
     }
 
     #[test]

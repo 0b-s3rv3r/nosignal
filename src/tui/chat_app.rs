@@ -6,6 +6,7 @@ use crate::network::{
 use crate::schema::TextMessage;
 use crate::tui::ui::{ChatStyle, MsgItem, PopupState, StatefulArea, StatefulList, Tui};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use log::{error, info, warn};
 use ratatui::{prelude::*, style::Style};
 use regex::Regex;
 use std::collections::HashMap;
@@ -108,7 +109,9 @@ impl<'a> ChatApp<'a> {
                         self.running = false;
                     }
                     KeyCode::Enter => {
-                        self.handle_text_buffer().await;
+                        if self.client.is_ok() {
+                            self.handle_text_buffer().await;
+                        }
                     }
                     KeyCode::Char('l') if modifiers.contains(KeyModifiers::CONTROL) => {
                         if self.current_popup == PopupState::List {
@@ -154,21 +157,29 @@ impl<'a> ChatApp<'a> {
                 let room = self.client.room.lock().unwrap();
                 let msg = TextMessage::new(&user.addr.unwrap(), &room._id, &text);
 
-                self.client
+                match self
+                    .client
                     .send_msg(Message::from((
                         UserMsg::Normal { msg: msg.clone() },
                         room.passwd.clone(),
                     )))
                     .await
-                    .unwrap();
-
-                self.messages.items.push(MsgItem::user_msg(
-                    &msg,
-                    user.color.clone(),
-                    &self.style,
-                    user._id.clone(),
-                    self.client.user._id.clone(),
-                ));
+                {
+                    Ok(_) => self.messages.items.push(MsgItem::user_msg(
+                        &msg,
+                        user.color.clone(),
+                        &self.style,
+                        user._id.clone(),
+                        self.client.user._id.clone(),
+                    )),
+                    Err(err) => {
+                        self.messages.items.push(MsgItem::info_msg(
+                            "Failed sending message".to_string(),
+                            Color::Rgb(255, 127, 127),
+                        ));
+                        info!("{}", err);
+                    }
+                }
             }
         }
     }
@@ -188,9 +199,6 @@ impl<'a> ChatApp<'a> {
                         ));
                     }
                     UserMsg::UserJoined { user } => {
-                        if user._id == self.client.user._id {
-                            self.client.user.addr = user.addr;
-                        }
                         self.users.insert(user.addr.unwrap(), user.clone());
 
                         self.messages.items.push(MsgItem::info_msg(
@@ -199,7 +207,10 @@ impl<'a> ChatApp<'a> {
                         ));
 
                         if self.client.user._id == user._id {
-                            self.client.sync().await.unwrap();
+                            self.client
+                                .sync()
+                                .await
+                                .unwrap_or_else(|err| warn!("{}", err));
                         }
                     }
                 },
@@ -233,17 +244,16 @@ impl<'a> ChatApp<'a> {
                             format!("{} has left", self.users.get(&addr).unwrap()._id),
                             Color::Rgb(50, 50, 50).into(),
                         ));
+                        self.users.remove(&addr).unwrap();
                     }
                     ServerMsg::BanConfirm { addr } => {
                         if addr == self.client.user.addr.unwrap() {
-                            self.client.close_connection();
-                            *self.client.is_ok.write().unwrap() = false;
-                            self.running = false;
-                            // log about ban
+                            self.messages.items.push(MsgItem::info_msg(
+                                "You has been banned from this server".to_string(),
+                                Color::Rgb(50, 50, 50),
+                            ));
+                            self.users.clear();
                         } else {
-                            self.client.room.lock().unwrap().banned_addrs.push(addr); // this
-                                                                                      // shouldn't be here
-
                             self.messages.items.push(MsgItem::info_msg(
                                 format!("{} has been banned", self.users.get(&addr).unwrap()._id),
                                 Color::Rgb(50, 50, 50).into(),
@@ -251,13 +261,17 @@ impl<'a> ChatApp<'a> {
                         }
                     }
                     ServerMsg::ServerShutdown => {
-                        self.client.close_connection();
-                        *self.client.is_ok.write().unwrap() = false;
-
                         self.messages.items.push(MsgItem::info_msg(
                             String::from("Server has been shutted down."),
                             Color::Rgb(50, 50, 50).into(),
                         ));
+                    }
+                    ServerMsg::AuthFailure => {
+                        self.running = false;
+                        error!(
+                            "Authorization failure from server {}!",
+                            self.client.room.lock().unwrap()._id
+                        );
                     }
                     _ => {}
                 },
@@ -286,9 +300,10 @@ impl<'a> ChatApp<'a> {
                         if let Some(user_addr) =
                             self.users.iter().find(|(_, user)| user._id == args[1])
                         {
-                            // if self.client.room.lock().unwrap().is_owner {
-                            self.client.ban(&user_addr.1.addr.unwrap()).await.unwrap();
-                            // }
+                            self.client
+                                .ban(&user_addr.1.addr.unwrap())
+                                .await
+                                .unwrap_or_else(|err| warn!("{}", err));
                         }
                     }
                 }

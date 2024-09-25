@@ -18,10 +18,13 @@ use std::time::Duration;
 use std::{env, io};
 use tokio::time::sleep;
 use tui::chat_app::ChatApp;
+use util::setup_logger;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let t = env::args().nth(1).unwrap();
+
+    setup_logger(None).unwrap();
 
     let room = Room {
         _id: "firstroom".into(),

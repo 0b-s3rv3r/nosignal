@@ -4,6 +4,7 @@ use super::{
 };
 use crate::schema::Room;
 use futures_util::{SinkExt, StreamExt};
+use log::{error, info, warn};
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex, RwLock},
@@ -72,20 +73,24 @@ impl ChatClient {
                 }
                 match msg {
                     Ok(msg) => {
-                        // if let MessageType::Server(ServerMsg::ConnectionRefused) =
-                        //     Message::from(msg.clone()).msg_type
-                        // {
-                        //     *rcloned_is_ok.write().unwrap() = false;
-                        // }
+                        if let Ok(ok_msg) = Message::try_from(&msg) {
+                            if let MessageType::Server(ServerMsg::ConnectionRefused) =
+                                ok_msg.msg_type
+                            {
+                                rcancel_token.cancel();
+                                *rcloned_is_ok.write().unwrap() = false;
+                                warn!("Connection refused");
+                            }
+                        }
                         if tx_in.send(msg).await.is_err() {
                             *rcloned_is_ok.write().unwrap() = false;
-                            eprintln!("Receiver dropped");
+                            error!("Receiver dropped");
                             return;
                         }
                     }
                     Err(e) => {
                         *rcloned_is_ok.write().unwrap() = false;
-                        eprintln!("Error reading message: {}", e);
+                        warn!("Error reading message {}", e);
                         return;
                     }
                 }
@@ -99,7 +104,7 @@ impl ChatClient {
                 }
                 if let Err(e) = write.send(msg).await {
                     *wcloned_is_ok.write().unwrap() = false;
-                    eprintln!("Error sending message: {}", e);
+                    error!("Error sending message: {}", e);
                     return;
                 }
             }
@@ -135,7 +140,59 @@ impl ChatClient {
                 return None;
             }
 
-            return Some(Message::from(receiver.recv().await.unwrap()).msg_type);
+            let msg_result = receiver.recv().await;
+            if msg_result.is_none() {
+                return None;
+            }
+            let msg_type = Message::from(msg_result.unwrap()).msg_type;
+            match &msg_type {
+                MessageType::Server(server_msg) => match server_msg {
+                    ServerMsg::AuthFailure => {
+                        self.close_connection();
+                        *self.is_ok.write().unwrap() = false;
+                    }
+                    ServerMsg::BanConfirm { addr } => {
+                        if *addr == self.user.addr.unwrap() {
+                            self.close_connection();
+                            *self.is_ok.write().unwrap() = false;
+                        }
+                        self.room.lock().unwrap().banned_addrs.push(*addr);
+                        info!(
+                            "{} has been banned from server {}!",
+                            addr,
+                            self.room.lock().unwrap()._id
+                        );
+                    }
+                    // ServerMsg::ConnectionRefused => {
+                    //     self.close_connection();
+                    //     *self.is_ok.write().unwrap() = false;
+                    //     warn!(
+                    //         "Connection refused from server {}",
+                    //         self.room.lock().unwrap().addr
+                    //     );
+                    // }
+                    ServerMsg::ServerShutdown => {
+                        self.close_connection();
+                        *self.is_ok.write().unwrap() = false;
+                        info!(
+                            "Server {} has been shutted down!",
+                            self.room.lock().unwrap()._id
+                        )
+                    }
+                    _ => {}
+                },
+                MessageType::User(user_msg) => match user_msg {
+                    UserMsg::UserJoined { user } => {
+                        if user._id == self.user._id {
+                            self.user.addr = user.addr;
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+
+            return Some(msg_type);
         }
         None
     }
