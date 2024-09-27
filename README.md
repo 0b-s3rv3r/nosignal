@@ -1,5 +1,5 @@
 # 💬kioto
 
-Single-executable, compact and minimalistic tui chat.
+Single-executable and minimalistic tui chat.
 
-![Screenshot from 2024-06-20 16-55-53](https://github.com/0watcher/kioto/assets/72736082/2b0a708b-69b2-4f1c-81cd-e432d0e84f08)
+![example - conv](https://github.com/user-attachments/assets/2eb152d1-0c9c-46d7-a244-ec0a314a5f90)
