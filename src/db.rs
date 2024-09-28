@@ -1,6 +1,6 @@
 use crate::schema::{LocalData, Room, TextMessage};
 use bson::doc;
-use log::{error, warn};
+use log::error;
 use polodb_core::{Collection, Database, Result as pdbResult};
 use std::path::Path;
 
@@ -34,18 +34,17 @@ impl DbRepo {
         })
     }
 
-    // pub fn room_update(&self, room: &Room) {
-    //     if let Err(err) = self.rooms.update_one(
-    //         doc! {
-    //             "_id": room._id.clone()
-    //         },
-    //         doc! {
-    //             "$set": doc! {
-    //                 "banned_addrs": room.banned_addrs,
-    //             }
-    //         },
-    //     ) {
-    //         error!("{}", err);
-    //     }
-    // }
+    pub fn room_update(&self, room: &Room) -> Result<(), polodb_core::Error> {
+        self.rooms.update_one(
+            doc! {
+                "_id": room._id.clone()
+            },
+            doc! {
+                "$set": doc! {
+                    "banned_addrs": room.banned_addrs.iter().map(|sa| sa.to_string()).collect::<Vec<String>>(),
+                }
+            },
+        )?;
+        Ok(())
+    }
 }

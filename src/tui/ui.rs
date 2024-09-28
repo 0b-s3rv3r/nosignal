@@ -15,7 +15,7 @@ use ratatui::{
     widgets::*,
 };
 use regex::Regex;
-use std::{io, usize};
+use std::io;
 use tui_pattern_highlighter::highlight_text;
 use tui_popup::{Popup, SizedWrapper};
 use tui_textarea::{CursorMove, Input, TextArea};
@@ -51,7 +51,10 @@ impl<B: Backend> Tui<B> {
         let mut msgs_list = List::new(app.messages.items.clone())
             .block(
                 Block::default()
-                    .title(app.client.room.lock().unwrap()._id.clone())
+                    .title_top(
+                        Line::from(app.client.room.lock().unwrap()._id.clone()).left_aligned(),
+                    )
+                    .title_bottom(Line::from("ctrl+[h]elp").right_aligned())
                     .borders(Borders::ALL)
                     .padding(Padding::new(2, 2, 1, 1))
                     .border_set(border::ROUNDED),

@@ -4,10 +4,10 @@ use super::{
 };
 use crate::schema::Room;
 use futures_util::{SinkExt, StreamExt};
-use log::{error, info, warn};
+use log::{error, warn};
 use std::{
     net::SocketAddr,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex},
 };
 use tokio::sync::mpsc::{self, error::SendError, Receiver, Sender};
 use tokio_tungstenite::{
@@ -23,7 +23,6 @@ pub struct ChatClient {
     transceiver: Option<Sender<TtMessage>>,
     in_receiver: Option<Receiver<TtMessage>>,
     finisher: CancellationToken,
-    pub is_ok: Arc<RwLock<bool>>,
 }
 
 impl ChatClient {
@@ -34,7 +33,6 @@ impl ChatClient {
             transceiver: None,
             in_receiver: None,
             finisher: CancellationToken::new(),
-            is_ok: Arc::new(RwLock::new(true)),
         }
     }
 
@@ -63,8 +61,6 @@ impl ChatClient {
 
         let rcancel_token = self.finisher.child_token();
         let wcancel_token = self.finisher.child_token();
-        let rcloned_is_ok = self.is_ok.clone();
-        let wcloned_is_ok = self.is_ok.clone();
 
         tokio::spawn(async move {
             while let Some(msg) = read.next().await {
@@ -73,25 +69,14 @@ impl ChatClient {
                 }
                 match msg {
                     Ok(msg) => {
-                        if let Ok(ok_msg) = Message::try_from(&msg) {
-                            if let MessageType::Server(ServerMsg::ConnectionRefused) =
-                                ok_msg.msg_type
-                            {
-                                rcancel_token.cancel();
-                                *rcloned_is_ok.write().unwrap() = false;
-                                warn!("Connection refused");
-                            }
-                        }
                         if tx_in.send(msg).await.is_err() {
-                            *rcloned_is_ok.write().unwrap() = false;
+                            rcancel_token.cancel();
                             error!("Receiver dropped");
-                            return;
                         }
                     }
                     Err(e) => {
-                        *rcloned_is_ok.write().unwrap() = false;
-                        warn!("Error reading message {}", e);
-                        return;
+                        rcancel_token.cancel();
+                        error!("Error reading message {}", e);
                     }
                 }
             }
@@ -103,9 +88,16 @@ impl ChatClient {
                     break;
                 }
                 if let Err(e) = write.send(msg).await {
-                    *wcloned_is_ok.write().unwrap() = false;
-                    error!("Error sending message: {}", e);
-                    return;
+                    match e {
+                        TtError::ConnectionClosed | TtError::AlreadyClosed => {
+                            wcancel_token.cancel();
+                            warn!("Unable to connect with server");
+                        }
+                        _ => {
+                            wcancel_token.cancel();
+                            error!("Error sending message: {}", e);
+                        }
+                    }
                 }
             }
         });
@@ -113,18 +105,15 @@ impl ChatClient {
         Ok(())
     }
 
-    pub fn close_connection(&mut self) {
+    pub fn disconnect(&mut self) {
         self.finisher.cancel();
     }
 
     pub fn is_ok(&self) -> bool {
-        *self.is_ok.read().unwrap()
+        !self.finisher.is_cancelled()
     }
 
     pub async fn send_msg(&self, msg: Message) -> Result<(), SendError<TtMessage>> {
-        if !self.is_ok() {
-            return Ok(());
-        }
         if let Some(transceiver) = &self.transceiver {
             transceiver.send(msg.to_ttmessage()).await?
         }
@@ -148,36 +137,16 @@ impl ChatClient {
             match &msg_type {
                 MessageType::Server(server_msg) => match server_msg {
                     ServerMsg::AuthFailure => {
-                        self.close_connection();
-                        *self.is_ok.write().unwrap() = false;
+                        self.disconnect();
                     }
                     ServerMsg::BanConfirm { addr } => {
                         if *addr == self.user.addr.unwrap() {
-                            self.close_connection();
-                            *self.is_ok.write().unwrap() = false;
+                            self.disconnect();
                         }
                         self.room.lock().unwrap().banned_addrs.push(*addr);
-                        info!(
-                            "{} has been banned from server {}!",
-                            addr,
-                            self.room.lock().unwrap()._id
-                        );
                     }
-                    // ServerMsg::ConnectionRefused => {
-                    //     self.close_connection();
-                    //     *self.is_ok.write().unwrap() = false;
-                    //     warn!(
-                    //         "Connection refused from server {}",
-                    //         self.room.lock().unwrap().addr
-                    //     );
-                    // }
                     ServerMsg::ServerShutdown => {
-                        self.close_connection();
-                        *self.is_ok.write().unwrap() = false;
-                        info!(
-                            "Server {} has been shutted down!",
-                            self.room.lock().unwrap()._id
-                        )
+                        self.disconnect();
                     }
                     _ => {}
                 },

@@ -105,7 +105,7 @@ impl<'a> ChatApp<'a> {
                         self.messages.next();
                     }
                     KeyCode::Char('q') if modifiers.contains(KeyModifiers::CONTROL) => {
-                        self.client.close_connection();
+                        self.client.disconnect();
                         self.running = false;
                     }
                     KeyCode::Enter => {
@@ -203,7 +203,7 @@ impl<'a> ChatApp<'a> {
 
                         self.messages.items.push(MsgItem::info_msg(
                             format!("{} has joined", user._id),
-                            Color::Rgb(50, 50, 50).into(),
+                            Color::Rgb(75, 75, 75).into(),
                         ));
 
                         if self.client.user._id == user._id {
@@ -242,7 +242,7 @@ impl<'a> ChatApp<'a> {
                     ServerMsg::UserLeft { addr } => {
                         self.messages.items.push(MsgItem::info_msg(
                             format!("{} has left", self.users.get(&addr).unwrap()._id),
-                            Color::Rgb(50, 50, 50).into(),
+                            Color::Rgb(75, 75, 75).into(),
                         ));
                         self.users.remove(&addr).unwrap();
                     }
@@ -250,20 +250,20 @@ impl<'a> ChatApp<'a> {
                         if addr == self.client.user.addr.unwrap() {
                             self.messages.items.push(MsgItem::info_msg(
                                 "You has been banned from this server".to_string(),
-                                Color::Rgb(50, 50, 50),
+                                Color::Rgb(75, 75, 75),
                             ));
                             self.users.clear();
                         } else {
                             self.messages.items.push(MsgItem::info_msg(
                                 format!("{} has been banned", self.users.get(&addr).unwrap()._id),
-                                Color::Rgb(50, 50, 50).into(),
+                                Color::Rgb(75, 75, 75).into(),
                             ));
                         }
                     }
                     ServerMsg::ServerShutdown => {
                         self.messages.items.push(MsgItem::info_msg(
                             String::from("Server has been shutted down."),
-                            Color::Rgb(50, 50, 50).into(),
+                            Color::Rgb(75, 75, 75).into(),
                         ));
                     }
                     ServerMsg::AuthFailure => {
@@ -273,7 +273,6 @@ impl<'a> ChatApp<'a> {
                             self.client.room.lock().unwrap()._id
                         );
                     }
-                    _ => {}
                 },
                 _ => {}
             }

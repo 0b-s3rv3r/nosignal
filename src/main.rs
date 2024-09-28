@@ -8,6 +8,7 @@ mod util;
 
 use app::{get_command_request, run};
 use db::DbRepo;
+use log::{error, warn};
 use network::server::ChatServer;
 use network::{client::ChatClient, User};
 use schema::{Color, Room};
@@ -63,9 +64,15 @@ async fn main() -> io::Result<()> {
 
             println!("Starting client...");
             let mut client = ChatClient::new(room_, user);
-            client.connect().await.unwrap();
-
+            if client.connect().await.is_err() {
+                error!("Unable to connect");
+                return Ok(());
+            }
             sleep(Duration::from_secs(1)).await;
+            if !client.is_ok() {
+                warn!("Connection refused");
+                return Ok(());
+            }
 
             let mut app = ChatApp::new(client, false);
             app.run().await?;
@@ -73,9 +80,12 @@ async fn main() -> io::Result<()> {
             server.stop().await;
         }
         "client" => {
-            let mut client = ChatClient::new(room2, user2);
-            client.connect().await.unwrap();
-
+            let mut client = ChatClient::new(room2.clone(), user2);
+            if client.connect().await.is_err() {
+                warn!("Connection refused from server {}", room2._id);
+                println!("Connection refused");
+                return Ok(());
+            }
             sleep(Duration::from_secs(1)).await;
 
             let mut app = ChatApp::new(client, false);

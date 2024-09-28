@@ -59,10 +59,11 @@ mod test {
         };
 
         let db = Arc::new(Mutex::new(DbRepo::memory_init().unwrap()));
+        db.lock().unwrap().rooms.insert_one(&room).unwrap();
         let mut peermap = HashMap::<SocketAddr, User>::new();
 
         let server_room = room.clone();
-        let mut server = ChatServer::new(server_room, db).await.unwrap();
+        let mut server = ChatServer::new(server_room, db.clone()).await.unwrap();
         server.run().await.unwrap();
         sleep(Duration::from_secs(1)).await;
 
@@ -141,22 +142,20 @@ mod test {
             assert_eq!(msg.content, sended_msg2.content);
         }
 
-        // client2
-        //     .send_msg(Message::from((
-        //         UserMsg::Normal {
-        //             msg: sended_msg2.clone(),
-        //         },
-        //         None,
-        //     )))
-        //     .await
-        //     .unwrap();
-        //
-        // sleep(Duration::from_millis(1)).await;
-        //
-        // assert_eq!(
-        //     client2.recv_msg().await.unwrap(),
-        //     MessageType::Server(ServerMsg::AuthFailure)
-        // );
+        client2
+            .send_msg(Message::from((
+                UserMsg::Normal {
+                    msg: sended_msg2.clone(),
+                },
+                None,
+            )))
+            .await
+            .unwrap();
+        sleep(Duration::from_millis(1)).await;
+        assert_eq!(
+            client2.recv_msg().await.unwrap(),
+            MessageType::Server(ServerMsg::AuthFailure)
+        );
 
         client
             .send_msg(Message::from((
@@ -187,7 +186,17 @@ mod test {
             MessageType::Server(ServerMsg::ServerShutdown)
         );
 
-        client.close_connection();
-        client2.close_connection();
+        client.disconnect();
+        client2.disconnect();
+
+        let banned_addrs = db
+            .lock()
+            .unwrap()
+            .rooms
+            .find_one(None)
+            .unwrap()
+            .unwrap()
+            .banned_addrs;
+        assert_eq!(server.room.lock().unwrap().banned_addrs, banned_addrs);
     }
 }
