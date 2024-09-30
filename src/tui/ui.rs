@@ -1,8 +1,4 @@
-use crate::{
-    schema::{Color as ChatColor, TextMessage},
-    tui::chat_app::ChatApp,
-    util::systime_to_string,
-};
+use crate::{schema::TextMessage, tui::chat_app::ChatApp, util::systime_to_string};
 use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -92,14 +88,14 @@ impl<B: Backend> Tui<B> {
                                     if user.addr.unwrap() == app.client.user.addr.unwrap() {
                                         Line::from(format!(
                                             "{} [{}]*",
-                                            user._id,
+                                            user.id,
                                             user.addr.unwrap().to_string()
                                         ))
                                         .fg(user.color.clone())
                                     } else {
                                         Line::from(format!(
                                             "{} [{}]",
-                                            user._id,
+                                            user.id,
                                             user.addr.unwrap().to_string()
                                         ))
                                         .fg(user.color.clone())

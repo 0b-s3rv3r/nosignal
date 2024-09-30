@@ -1,55 +1,51 @@
 use crate::{
     db::DbRepo,
     error::AppError,
-    schema::{Color, LocalData, Room},
-    util::{create_env_dir, get_unique_id, hash_passwd, passwd_input, setup_logger},
+    network::{
+        client::ChatClient,
+        message::{MessageType, ServerMsg},
+        server::ChatServer,
+        User,
+    },
+    schema::{Color, LocalData, RoomHeader, ServerRoom},
+    tui::chat_app::ChatApp,
+    util::{create_env_dir, get_unique_id, passwd_input, setup_logger},
 };
 use clap::{Arg, ArgMatches, Command};
 use crossterm::style::Stylize;
 use polodb_core::{bson::doc, Result as pdbResult};
 use std::{
-    any::Any,
     env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::Path,
     str::FromStr,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
+use tokio::time::sleep;
+use tokio_util::either::Either;
 
-pub fn run(cmd_req: CommandRequest, open_memory: bool) -> Result<(), AppError> {
+pub async fn run(cmd_req: CommandRequest) -> Result<(), AppError> {
     let path = create_env_dir("kioto")?;
 
     let log_path = path.join("errors.log");
     setup_logger(Some(&log_path)).expect(format!("{}", "Failed to set up logger.".red()).as_str());
 
-    let mut db = if open_memory {
-        db_init(None)?
-    } else {
-        db_init(Some(&path))?
-    };
-
-    run_option(cmd_req, &mut db)?;
-
+    let db_path = path.join("db.json");
+    let mut db = db_init(Some(&db_path))?;
+    run_option(cmd_req, &mut db).await?;
     Ok(())
 }
 
-fn run_option(cmd_req: CommandRequest, db: &DbRepo) -> Result<(), AppError> {
+async fn run_option(cmd_req: CommandRequest, db: &DbRepo) -> Result<(), AppError> {
     match cmd_req {
-        CommandRequest::Create {
-            room_id,
-            ip,
-            password,
-        } => create_room(db, &room_id, ip, password)?,
-        CommandRequest::Join {
-            id_or_address,
-            username,
-            color,
-        } => join_room(id_or_address, username, color)?,
+        CommandRequest::Create { room_id, password } => create_room(db, &room_id, password)?,
+        CommandRequest::Join { id_or_address } => join_room(id_or_address, &db).await?,
         CommandRequest::Delete { room_id } => delete_room(&db, &room_id)?,
         CommandRequest::List => list_rooms_and_local_data(&db)?,
         CommandRequest::Set { option, value } => set_local_data(db, &option, &value)?,
         CommandRequest::Invalid => return Err(AppError::InvalidCommand),
     }
-
     Ok(())
 }
 
@@ -69,95 +65,238 @@ pub fn db_init(db_path: Option<&Path>) -> pdbResult<DbRepo> {
             light_mode: false,
         })?;
     }
-
     Ok(db)
 }
 
-fn create_room(
-    db: &DbRepo,
-    room_id: &str,
-    room_ip: Option<String>,
-    password: bool,
-) -> Result<(), AppError> {
-    if db.rooms.find_one(doc! {"_id": room_id})?.is_some() {
+fn create_room(db: &DbRepo, room_id: &str, password: bool) -> Result<(), AppError> {
+    if db.server_rooms.find_one(doc! {"_id": room_id})?.is_some() {
         return Err(AppError::AlreadyExistingId);
     }
 
-    let addr = match room_ip {
-        Some(ip) => SocketAddr::from_str(&ip).unwrap(),
-        None => {
-            db.local_data
-                .find_one(None)?
-                .ok_or(AppError::DataNotFound)?
-                .room_addr
-        }
-    };
-
+    let addr = db
+        .local_data
+        .find_one(None)?
+        .ok_or(AppError::DataNotFound)?
+        .room_addr;
     let passwd = if password { Some(passwd_input()) } else { None };
 
-    db.rooms.insert_one(&Room {
+    db.server_rooms.insert_one(&ServerRoom {
         _id: room_id.into(),
         addr,
         passwd,
         banned_addrs: vec![],
-        is_owner: true,
     })?;
-
     Ok(())
 }
 
 fn delete_room(db: &DbRepo, room_id: &str) -> Result<(), AppError> {
-    if let Some(room) = db.rooms.find_one(doc! {"_id": room_id})? {
-        if room.is_owner {
-            if let Some(passwd) = room.passwd {
-                hash_passwd(&passwd);
-                if passwd_input() != passwd {
-                    return Err(AppError::InvalidPassword);
-                }
-            }
+    match find_room(db, room_id)? {
+        Either::Left(_) => {
+            // if let Some(passwd) = server_room.passwd {
+            //     if passwd_input() != passwd {
+            //         return Err(AppError::AuthFailure);
+            //     }
+            // }
+            db.server_rooms.delete_one(doc! {"_id": room_id})?;
+            db.messages.delete_many(doc! {"_id": room_id})?;
+            Ok(())
         }
-    } else {
-        return Err(AppError::NotExistingId);
+        Either::Right(_) => {
+            db.room_headers.delete_one(doc! {"_id": room_id})?;
+            Ok(())
+        }
     }
-
-    db.rooms.delete_one(doc! {"_id": room_id})?;
-    Ok(())
 }
 
 fn list_rooms_and_local_data(db: &DbRepo) -> Result<(), AppError> {
-    let local_data = db.rooms.find_one(None)?.ok_or(AppError::DataNotFound)?;
+    let local_data = db
+        .local_data
+        .find_one(None)?
+        .ok_or(AppError::DataNotFound)?;
+    let local_data_print = format!(
+        "Local Data:\n\tuser_id: {}\n\troom_addr: {}\n\tcolor: {}\n\tlight_mode: {}",
+        local_data.user_id,
+        local_data.room_addr.to_string(),
+        local_data.color.to_string(),
+        local_data.light_mode.to_string(),
+    );
+    println!("{}", local_data_print);
 
-    println!("{:#?}", local_data);
-
-    let mut rooms = db.rooms.find(None)?;
-    if !rooms.any(|el| {
+    println!("\nRooms:");
+    let server_rooms = db.server_rooms.find(None)?;
+    let room_headers = db.room_headers.find(None)?;
+    server_rooms.for_each(|el| {
         let room = el.unwrap();
-        println!("{}: {}", room._id, room.addr.to_string());
-        true
-    }) {
-        return Err(AppError::NoAnyRoom);
+        println!("\t{}: {} [host]", room._id, room.addr.to_string());
+    });
+    room_headers.for_each(|el| {
+        let room = el.unwrap();
+        println!("\t{}: {} [guest]", room._id, room.addr.to_string());
+    });
+    Ok(())
+}
+
+async fn join_room(id_or_addr: IdOrAddr, db: &DbRepo) -> Result<(), AppError> {
+    let local_data = db.local_data.find_one(None).unwrap().unwrap();
+    let user = User {
+        id: local_data.user_id,
+        addr: None,
+        color: local_data.color,
+    };
+
+    match id_or_addr {
+        IdOrAddr::Id(room_id) => {
+            let room = find_room(db, &room_id)?;
+            match room {
+                Either::Left(server_room) => {
+                    let room_header = server_room.room_header();
+                    let db = Arc::new(Mutex::new(DbRepo::memory_init().unwrap()));
+
+                    let mut server = ChatServer::new(server_room, db).await.unwrap();
+                    server.run().await.unwrap();
+                    sleep(Duration::from_secs(1)).await;
+
+                    let mut client = ChatClient::new(room_header, user);
+                    if client.connect().await.is_err() {
+                        return Err(AppError::ConnectionRefused);
+                    }
+                    sleep(Duration::from_secs(1)).await;
+                    if !client.is_ok() {
+                        return Err(AppError::ConnectionRefused);
+                    }
+
+                    let mut app = ChatApp::new(client, false);
+                    app.run().await?;
+
+                    server.stop().await;
+                }
+                Either::Right(room_header) => {
+                    let mut client = ChatClient::new(room_header, user);
+                    if client.connect().await.is_err() {
+                        return Err(AppError::ConnectionRefused);
+                    }
+                    sleep(Duration::from_secs(1)).await;
+                    if let MessageType::Server(ServerMsg::Auth { passwd, .. }) =
+                        client.recv_msg().await.unwrap()
+                    {
+                        if let Some(passwd) = passwd {
+                            if passwd_input() != passwd {
+                                client.disconnect();
+                                return Err(AppError::AuthFailure);
+                            }
+                        }
+                    }
+                    if !client.is_ok() {
+                        return Err(AppError::ConnectionRefused);
+                    }
+
+                    let mut app = ChatApp::new(client, false);
+                    app.run().await?;
+                }
+            }
+        }
+        IdOrAddr::Addr(addr) => {
+            let room_header = RoomHeader {
+                _id: String::from(""),
+                addr: SocketAddr::from_str(&addr).unwrap(),
+                passwd: None,
+            };
+
+            let mut client = ChatClient::new(room_header, user);
+            if client.connect().await.is_err() {
+                return Err(AppError::ConnectionRefused);
+            }
+            sleep(Duration::from_secs(1)).await;
+            if let MessageType::Server(ServerMsg::Auth { passwd, .. }) =
+                client.recv_msg().await.unwrap()
+            {
+                if db.room_headers.find_one(doc! {"addr": addr})?.is_none() {
+                    db.room_headers
+                        .insert_one(client.room.lock().unwrap().clone())?;
+                }
+
+                if let Some(passwd) = passwd {
+                    if passwd_input() != passwd {
+                        client.disconnect();
+                        return Err(AppError::AuthFailure);
+                    }
+                }
+            }
+            if !client.is_ok() {
+                return Err(AppError::ConnectionRefused);
+            }
+
+            let mut app = ChatApp::new(client, false);
+            app.run().await?;
+        }
+    }
+    Ok(())
+}
+
+fn set_local_data(db: &DbRepo, option: &str, value: &str) -> Result<(), AppError> {
+    match option {
+        "user_id" => {
+            db.local_data.update_one(
+                doc! {"id": 0},
+                doc! {"$set": doc! {
+                    option: value
+                }},
+            )?;
+        }
+        "room_addr" => {
+            if SocketAddr::from_str(value).is_err() {
+                return Err(AppError::InvalidArgument);
+            }
+            db.local_data.update_one(
+                doc! {"id": 0},
+                doc! {"$set": doc! {
+                    option: value
+                }},
+            )?;
+        }
+        "color" => {
+            if Color::from_str(value).is_err() {
+                return Err(AppError::InvalidArgument);
+            }
+            db.local_data.update_one(
+                doc! {"id": 0},
+                doc! {"$set": doc! {
+                    option: value
+                }},
+            )?;
+        }
+        "light_mode" => {
+            if let Ok(state) = bool::from_str(value) {
+                db.local_data.update_one(
+                    doc! {"id": 0},
+                    doc! {"$set": doc! {
+                        option: state
+                    }},
+                )?;
+            } else {
+                return Err(AppError::InvalidArgument);
+            }
+        }
+        _ => return Err(AppError::InvalidArgument),
     }
 
     Ok(())
 }
 
-fn join_room(
-    id_or_addr: IdOrAddr,
-    username: Option<String>,
-    color: Option<Color>,
-) -> Result<(), AppError> {
-    todo!("if there is no such id then join, then store info temporary")
-}
+fn find_room(db: &DbRepo, room_id: &str) -> Result<Either<ServerRoom, RoomHeader>, AppError> {
+    if let Some(room) = db.room_headers.find_one(doc! {
+       "_id": room_id
+    })? {
+        return Ok(Either::Right(room));
+    }
 
-fn set_local_data(db: &DbRepo, option: &str, value: &str) -> Result<(), AppError> {
-    db.local_data.update_one(
-        doc! {"id": 0},
-        doc! {"$set": doc! {
-            option: value
-        }},
-    )?;
+    if let Some(room) = db.server_rooms.find_one(doc! {
+       "_id": room_id
+    })? {
+        return Ok(Either::Left(room));
+    }
 
-    Ok(())
+    Err(AppError::NotExistingId)
 }
 
 #[derive(Debug)]
@@ -168,24 +307,11 @@ pub enum IdOrAddr {
 
 #[derive(Debug)]
 pub enum CommandRequest {
-    Create {
-        room_id: String,
-        ip: Option<String>,
-        password: bool,
-    },
-    Join {
-        id_or_address: IdOrAddr,
-        username: Option<String>,
-        color: Option<Color>,
-    },
-    Delete {
-        room_id: String,
-    },
+    Create { room_id: String, password: bool },
+    Join { id_or_address: IdOrAddr },
+    Delete { room_id: String },
+    Set { option: String, value: String },
     List,
-    Set {
-        option: String,
-        value: String,
-    },
     Invalid,
 }
 
@@ -197,18 +323,8 @@ pub fn get_command_request() -> CommandRequest {
                 .unwrap()
                 .to_owned();
 
-            let room_ip = if let Some(room_ip) = create_matches.get_one::<String>("room_ip") {
-                Some(room_ip)
-            } else {
-                None
-            };
-
             let password = create_matches.get_flag("password");
-            CommandRequest::Create {
-                room_id,
-                ip: room_ip.cloned(),
-                password,
-            }
+            CommandRequest::Create { room_id, password }
         }
         Some(("join", join_matches)) => {
             let id_or_addr_ = join_matches
@@ -216,28 +332,14 @@ pub fn get_command_request() -> CommandRequest {
                 .unwrap()
                 .to_owned();
 
-            let id_or_addr = if Ipv4Addr::from_str(&id_or_addr_).is_ok() {
+            let id_or_addr = if SocketAddr::from_str(&id_or_addr_).is_ok() {
                 IdOrAddr::Addr(id_or_addr_)
             } else {
                 IdOrAddr::Id(id_or_addr_)
             };
 
-            let username = if let Some(username) = join_matches.get_one::<String>("username") {
-                Some(username)
-            } else {
-                None
-            };
-
-            let color = if let Some(color) = join_matches.get_one::<String>("color") {
-                Some(Color::from_str(color).unwrap())
-            } else {
-                None
-            };
-
             CommandRequest::Join {
                 id_or_address: id_or_addr,
-                username: username.cloned(),
-                color,
             }
         }
         Some(("delete", delete_matches)) => {
@@ -247,7 +349,6 @@ pub fn get_command_request() -> CommandRequest {
                 .to_owned();
             CommandRequest::Delete { room_id }
         }
-        Some(("list", _)) => CommandRequest::List,
         Some(("set", set_matches)) => {
             let option_str = set_matches.get_one::<String>("option").unwrap();
             let value_str = set_matches.get_one::<String>("value").unwrap();
@@ -256,6 +357,7 @@ pub fn get_command_request() -> CommandRequest {
                 value: value_str.to_string(),
             }
         }
+        Some(("list", _)) => CommandRequest::List,
         _ => CommandRequest::Invalid,
     }
 }
@@ -278,17 +380,14 @@ fn config_clap() -> ArgMatches {
                         .num_args(0)
                         .required(false),
                 )
-                .arg(Arg::new("room_id").required(true))
-                .arg(Arg::new("room_ip").required(false)),
+                .arg(Arg::new("room_id").required(true)),
         )
         .subcommand(
             Command::new("join")
                 .long_flag("join")
                 .short_flag('j')
                 .about("Joins a room")
-                .arg(Arg::new("id_or_addr").required(true))
-                .arg(Arg::new("username").required(false))
-                .arg(Arg::new("color").required(false)),
+                .arg(Arg::new("id_or_addr").required(true)),
         )
         .subcommand(
             Command::new("delete")
@@ -318,61 +417,62 @@ fn config_clap() -> ArgMatches {
 mod test {
     use std::{net::SocketAddr, str::FromStr};
 
-    use crate::app::{db_init, run_option};
+    use crate::{
+        app::{db_init, run_option},
+        schema::ServerRoom,
+    };
 
-    use super::{Color, CommandRequest, LocalData, Room};
+    use super::{Color, CommandRequest, LocalData};
     use polodb_core::bson::doc;
 
-    #[test]
-    fn new_room_creation() {
+    #[tokio::test]
+    async fn new_room_creation() {
         let db = db_init(None).unwrap();
 
-        let room_with_custom_values = Room {
+        let room_with_custom_values = ServerRoom {
             _id: "someroom".into(),
-            addr: SocketAddr::from_str("127.0.0.1:8080".into()).unwrap(),
+            addr: SocketAddr::from_str("127.0.0.1:12345".into()).unwrap(),
             passwd: None,
             banned_addrs: vec![],
-            is_owner: true,
         };
 
         run_option(
             CommandRequest::Create {
                 room_id: room_with_custom_values._id.clone(),
-                ip: Some(room_with_custom_values.addr.to_string()),
                 password: false,
             },
             &db,
         )
+        .await
         .unwrap();
 
         assert_eq!(
-            db.rooms
+            db.server_rooms
                 .find_one(doc! {"_id": "someroom"})
                 .unwrap()
                 .unwrap(),
             room_with_custom_values
         );
 
-        let room_with_default_values = Room {
+        let room_with_default_values = ServerRoom {
             _id: "anotheroom".into(),
             addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
             passwd: None,
             banned_addrs: vec![],
-            is_owner: true,
         };
 
         run_option(
             CommandRequest::Create {
                 room_id: room_with_default_values._id.clone(),
-                ip: None,
                 password: false,
             },
             &db,
         )
+        .await
         .unwrap();
 
         assert_eq!(
-            db.rooms
+            db.server_rooms
                 .find_one(doc! {"_id": "anotheroom"})
                 .unwrap()
                 .unwrap(),
@@ -380,30 +480,29 @@ mod test {
         );
     }
 
-    #[test]
-    fn room_deletion() {
+    #[tokio::test]
+    async fn room_deletion() {
         let db = db_init(None).unwrap();
 
-        let room = Room {
+        let room = ServerRoom {
             _id: "someroom".into(),
-            addr: SocketAddr::from_str("127.0.0.1:8080").unwrap(),
+            addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
             passwd: None,
             banned_addrs: vec![],
-            is_owner: true,
         };
 
         run_option(
             CommandRequest::Create {
                 room_id: room._id.clone(),
-                ip: Some(room.addr.to_string()),
                 password: false,
             },
             &db,
         )
+        .await
         .unwrap();
 
         assert_eq!(
-            db.rooms
+            db.server_rooms
                 .find_one(doc! {"_id": "someroom"})
                 .unwrap()
                 .unwrap(),
@@ -416,9 +515,13 @@ mod test {
             },
             &db,
         )
+        .await
         .unwrap();
 
-        assert_eq!(db.rooms.find_one(doc! {"_id": "someroom"}).unwrap(), None);
+        assert_eq!(
+            db.server_rooms.find_one(doc! {"_id": "someroom"}).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -440,8 +543,8 @@ mod test {
         assert_eq!(local_data_from_db.light_mode, local_data.light_mode);
     }
 
-    #[test]
-    fn local_data_setting() {
+    #[tokio::test]
+    async fn local_data_setting() {
         let db = db_init(None).unwrap();
 
         run_option(
@@ -451,6 +554,7 @@ mod test {
             },
             &db,
         )
+        .await
         .unwrap();
 
         assert_eq!(
@@ -462,7 +566,4 @@ mod test {
             "someuser"
         );
     }
-
-    #[test]
-    fn room_joining() {}
 }

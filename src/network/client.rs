@@ -2,7 +2,7 @@ use super::{
     message::{Message, MessageType, ServerMsg, UserMsg, UserReqMsg},
     User,
 };
-use crate::schema::Room;
+use crate::schema::RoomHeader;
 use futures_util::{SinkExt, StreamExt};
 use log::{error, warn};
 use std::{
@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Debug)]
 pub struct ChatClient {
-    pub room: Arc<Mutex<Room>>,
+    pub room: Arc<Mutex<RoomHeader>>,
     pub user: User,
     transceiver: Option<Sender<TtMessage>>,
     in_receiver: Option<Receiver<TtMessage>>,
@@ -26,7 +26,7 @@ pub struct ChatClient {
 }
 
 impl ChatClient {
-    pub fn new(room: Room, user: User) -> Self {
+    pub fn new(room: RoomHeader, user: User) -> Self {
         Self {
             room: Arc::new(Mutex::new(room)),
             user,
@@ -43,6 +43,16 @@ impl ChatClient {
 
         let (tx, mut rx) = mpsc::channel::<TtMessage>(100);
         let (tx_in, rx_in) = mpsc::channel::<TtMessage>(100);
+
+        tx.send(
+            Message::from((
+                UserReqMsg::SyncReq,
+                self.room.lock().unwrap().passwd.clone(),
+            ))
+            .to_ttmessage(),
+        )
+        .await
+        .unwrap();
 
         tx.send(
             Message::from((
@@ -143,18 +153,19 @@ impl ChatClient {
                         if *addr == self.user.addr.unwrap() {
                             self.disconnect();
                         }
-                        self.room.lock().unwrap().banned_addrs.push(*addr);
                     }
                     ServerMsg::ServerShutdown => {
                         self.disconnect();
                     }
-                    _ => {}
-                },
-                MessageType::User(user_msg) => match user_msg {
-                    UserMsg::UserJoined { user } => {
-                        if user._id == self.user._id {
-                            self.user.addr = user.addr;
-                        }
+                    ServerMsg::Auth {
+                        user_addr,
+                        room_id,
+                        passwd,
+                    } => {
+                        self.user.addr = Some(*user_addr);
+                        let mut room = self.room.lock().unwrap();
+                        room._id = room_id.to_string();
+                        room.passwd = passwd.clone();
                     }
                     _ => {}
                 },
@@ -164,15 +175,6 @@ impl ChatClient {
             return Some(msg_type);
         }
         None
-    }
-
-    pub async fn sync(&self) -> Result<(), SendError<TtMessage>> {
-        Ok(self
-            .send_msg(Message::from((
-                UserReqMsg::SyncReq,
-                self.room.lock().unwrap().passwd.clone(),
-            )))
-            .await?)
     }
 
     pub async fn ban(&self, addr: &SocketAddr) -> Result<(), SendError<TtMessage>> {

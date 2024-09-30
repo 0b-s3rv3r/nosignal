@@ -1,12 +1,13 @@
+use crate::error::AppError;
 use crate::network::client::ChatClient;
 use crate::network::{
-    message::{Message, MessageType, ServerMsg, UserMsg, UserReqMsg},
+    message::{Message, MessageType, ServerMsg, UserMsg},
     User,
 };
 use crate::schema::TextMessage;
 use crate::tui::ui::{ChatStyle, MsgItem, PopupState, StatefulArea, StatefulList, Tui};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use log::{error, info, warn};
+use log::{info, warn};
 use ratatui::{prelude::*, style::Style};
 use regex::Regex;
 use std::collections::HashMap;
@@ -14,6 +15,8 @@ use std::io;
 use std::net::SocketAddr;
 use tokio::time::Duration;
 use tui_textarea::CursorMove;
+
+type IsAuthorized = bool;
 
 pub struct ChatApp<'a> {
     pub running: bool,
@@ -52,14 +55,16 @@ impl<'a> ChatApp<'a> {
         }
     }
 
-    pub async fn run(&mut self) -> io::Result<()> {
+    pub async fn run(&mut self) -> Result<(), AppError> {
         let terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
         let mut tui = Tui::new(terminal);
         tui.term_init()?;
 
         while self.running {
             if self.client.is_ok() {
-                self.handle_msgs().await;
+                if !self.handle_msgs().await {
+                    return Err(AppError::AuthFailure);
+                }
             }
             tui.draw(self)?;
             self.handle_input().await?;
@@ -169,8 +174,8 @@ impl<'a> ChatApp<'a> {
                         &msg,
                         user.color.clone(),
                         &self.style,
-                        user._id.clone(),
-                        self.client.user._id.clone(),
+                        user.id.clone(),
+                        self.client.user.id.clone(),
                     )),
                     Err(err) => {
                         self.messages.items.push(MsgItem::info_msg(
@@ -184,7 +189,7 @@ impl<'a> ChatApp<'a> {
         }
     }
 
-    async fn handle_msgs(&mut self) {
+    async fn handle_msgs(&mut self) -> IsAuthorized {
         if let Some(msg_type) = self.client.recv_msg().await.take() {
             match msg_type {
                 MessageType::User(user_msg) => match user_msg {
@@ -194,28 +199,23 @@ impl<'a> ChatApp<'a> {
                             &msg,
                             user.color.clone(),
                             &self.style,
-                            user._id.clone(),
-                            self.client.user._id.clone(),
+                            user.id.clone(),
+                            self.client.user.id.clone(),
                         ));
                     }
                     UserMsg::UserJoined { user } => {
                         self.users.insert(user.addr.unwrap(), user.clone());
 
                         self.messages.items.push(MsgItem::info_msg(
-                            format!("{} has joined", user._id),
+                            format!("{} has joined", user.id),
                             Color::Rgb(75, 75, 75).into(),
                         ));
-
-                        if self.client.user._id == user._id {
-                            self.client
-                                .sync()
-                                .await
-                                .unwrap_or_else(|err| warn!("{}", err));
-                        }
                     }
                 },
                 MessageType::Server(server_msg) => match server_msg {
-                    ServerMsg::Sync { messages, users } => {
+                    ServerMsg::Sync {
+                        messages, users, ..
+                    } => {
                         self.users.extend(
                             users
                                 .into_iter()
@@ -232,8 +232,8 @@ impl<'a> ChatApp<'a> {
                                         &msg,
                                         user.color.clone(),
                                         &self.style,
-                                        user._id.clone(),
-                                        self.client.user._id.clone(),
+                                        user.id.clone(),
+                                        self.client.user.id.clone(),
                                     )
                                 })
                                 .collect::<Vec<Text>>(),
@@ -241,7 +241,7 @@ impl<'a> ChatApp<'a> {
                     }
                     ServerMsg::UserLeft { addr } => {
                         self.messages.items.push(MsgItem::info_msg(
-                            format!("{} has left", self.users.get(&addr).unwrap()._id),
+                            format!("{} has left", self.users.get(&addr).unwrap().id),
                             Color::Rgb(75, 75, 75).into(),
                         ));
                         self.users.remove(&addr).unwrap();
@@ -255,7 +255,7 @@ impl<'a> ChatApp<'a> {
                             self.users.clear();
                         } else {
                             self.messages.items.push(MsgItem::info_msg(
-                                format!("{} has been banned", self.users.get(&addr).unwrap()._id),
+                                format!("{} has been banned", self.users.get(&addr).unwrap().id),
                                 Color::Rgb(75, 75, 75).into(),
                             ));
                         }
@@ -268,11 +268,9 @@ impl<'a> ChatApp<'a> {
                     }
                     ServerMsg::AuthFailure => {
                         self.running = false;
-                        error!(
-                            "Authorization failure from server {}!",
-                            self.client.room.lock().unwrap()._id
-                        );
+                        return false;
                     }
+                    _ => {}
                 },
                 _ => {}
             }
@@ -280,6 +278,7 @@ impl<'a> ChatApp<'a> {
         if !self.messages.is_highlighted {
             self.messages.select_last();
         }
+        true
     }
 
     fn handle_deleting_chars(&mut self) {
@@ -297,7 +296,7 @@ impl<'a> ChatApp<'a> {
                 match command.1 {
                     Action::Ban => {
                         if let Some(user_addr) =
-                            self.users.iter().find(|(_, user)| user._id == args[1])
+                            self.users.iter().find(|(_, user)| user.id == args[1])
                         {
                             self.client
                                 .ban(&user_addr.1.addr.unwrap())

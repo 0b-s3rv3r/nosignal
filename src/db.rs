@@ -1,11 +1,10 @@
-use crate::schema::{LocalData, Room, TextMessage};
-use bson::doc;
-use log::error;
+use crate::schema::{LocalData, RoomHeader, ServerRoom, TextMessage};
 use polodb_core::{Collection, Database, Result as pdbResult};
 use std::path::Path;
 
 pub struct DbRepo {
-    pub rooms: Collection<Room>,
+    pub server_rooms: Collection<ServerRoom>,
+    pub room_headers: Collection<RoomHeader>,
     pub messages: Collection<TextMessage>,
     pub local_data: Collection<LocalData>,
     _db: Database,
@@ -16,7 +15,8 @@ impl DbRepo {
         let db = Database::open_file(filepath)?;
 
         Ok(DbRepo {
-            rooms: db.collection::<Room>("rooms"),
+            server_rooms: db.collection::<ServerRoom>("server_rooms"),
+            room_headers: db.collection::<RoomHeader>("room_headers"),
             messages: db.collection::<TextMessage>("messages"),
             local_data: db.collection::<LocalData>("local_data"),
             _db: db,
@@ -27,24 +27,11 @@ impl DbRepo {
         let db = Database::open_memory()?;
 
         Ok(DbRepo {
-            rooms: db.collection::<Room>("rooms"),
+            server_rooms: db.collection::<ServerRoom>("server_rooms"),
+            room_headers: db.collection::<RoomHeader>("room_headers"),
             messages: db.collection::<TextMessage>("messages"),
             local_data: db.collection::<LocalData>("local_data"),
             _db: db,
         })
-    }
-
-    pub fn room_update(&self, room: &Room) -> Result<(), polodb_core::Error> {
-        self.rooms.update_one(
-            doc! {
-                "_id": room._id.clone()
-            },
-            doc! {
-                "$set": doc! {
-                    "banned_addrs": room.banned_addrs.iter().map(|sa| sa.to_string()).collect::<Vec<String>>(),
-                }
-            },
-        )?;
-        Ok(())
     }
 }

@@ -8,20 +8,24 @@ use std::net::SocketAddr;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct User {
-    pub _id: String,
+    pub id: String,
     pub addr: Option<SocketAddr>,
     pub color: Color,
 }
 
 #[cfg(test)]
 mod test {
-    use super::message::MessageType;
     use crate::{
         db::DbRepo,
-        network::message::{Message, ServerMsg, UserMsg, UserReqMsg},
-        schema::{Color, Room, TextMessage},
+        network::{
+            client::ChatClient,
+            message::MessageType,
+            message::{Message, ServerMsg, UserMsg, UserReqMsg},
+            server::ChatServer,
+            User,
+        },
+        schema::{Color, ServerRoom, TextMessage},
         util::hash_passwd,
-        ChatClient, ChatServer, User,
     };
     use std::{
         collections::HashMap,
@@ -37,66 +41,97 @@ mod test {
         let passwd = String::from("password");
         hash_passwd(&passwd);
 
-        let room = Room {
+        let room = ServerRoom {
             _id: "firstroom".into(),
             addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
             passwd: Some(passwd),
             banned_addrs: vec![],
-            is_owner: true,
         };
-        let mut room2 = room.clone();
-        room2.is_owner = false;
+        let header = room.room_header();
 
         let mut user = User {
-            _id: "user1".into(),
+            id: "user1".into(),
             addr: None,
             color: Color::LightRed,
         };
         let mut user2 = User {
-            _id: "user2".into(),
+            id: "user2".into(),
             addr: None,
             color: Color::LightGreen,
         };
 
         let db = Arc::new(Mutex::new(DbRepo::memory_init().unwrap()));
-        db.lock().unwrap().rooms.insert_one(&room).unwrap();
+        db.lock()
+            .unwrap()
+            .server_rooms
+            .insert_one(&room.clone())
+            .unwrap();
         let mut peermap = HashMap::<SocketAddr, User>::new();
 
-        let server_room = room.clone();
-        let mut server = ChatServer::new(server_room, db.clone()).await.unwrap();
+        let mut server = ChatServer::new(room.clone(), db.clone()).await.unwrap();
         server.run().await.unwrap();
         sleep(Duration::from_secs(1)).await;
 
-        let room_ = room.clone();
-        let mut client = ChatClient::new(room_, user.clone());
+        let mut client = ChatClient::new(header.clone(), user.clone());
         client.connect().await.unwrap();
-        sleep(Duration::from_millis(1)).await;
+        sleep(Duration::from_secs(1)).await;
 
+        if let MessageType::Server(ServerMsg::Auth { user_addr, .. }) =
+            client.recv_msg().await.unwrap()
+        {
+            user.addr = Some(user_addr);
+        } else {
+            assert!(false);
+        }
+        if let MessageType::Server(ServerMsg::Sync { .. }) = client.recv_msg().await.unwrap() {
+            assert!(true);
+        } else {
+            assert!(false);
+        }
         if let MessageType::User(UserMsg::UserJoined { user: user_ }) =
             client.recv_msg().await.unwrap()
         {
-            user.addr = user_.addr;
             peermap.insert(user.addr.unwrap(), user.clone());
             assert_eq!(user, user_)
         } else {
             assert!(false);
         }
 
-        let sended_msg = TextMessage::new(&user.addr.unwrap(), &room._id, "some short message");
+        let sended_msg = TextMessage::new(&user.addr.unwrap(), &header._id, "some short message");
         let mut sended_msg2 = sended_msg.clone();
         client
             .send_msg(Message::from((
                 UserMsg::Normal {
                     msg: sended_msg.clone(),
                 },
-                Some(room.passwd.clone().unwrap()),
+                Some(header.passwd.clone().unwrap()),
             )))
             .await
             .unwrap();
 
-        let mut client2 = ChatClient::new(room2.clone(), user2.clone());
+        let mut client2 = ChatClient::new(header.clone(), user2.clone());
         client2.connect().await.unwrap();
         sleep(Duration::from_millis(1)).await;
+
+        if let MessageType::Server(ServerMsg::Auth { user_addr, .. }) =
+            client2.recv_msg().await.unwrap()
+        {
+            user2.addr = Some(user_addr);
+        } else {
+            assert!(false);
+        }
+
+        if let MessageType::Server(ServerMsg::Sync {
+            messages, users, ..
+        }) = client2.recv_msg().await.unwrap()
+        {
+            assert_eq!(messages[0].room_id, sended_msg.room_id);
+            assert_eq!(messages[0].sender_addr, sended_msg.sender_addr);
+            assert_eq!(messages[0].content, sended_msg.content);
+            assert_eq!(users[0], peermap.get(&user.addr.unwrap()).unwrap().clone());
+        } else {
+            assert!(false);
+        }
         if let MessageType::User(UserMsg::UserJoined { user: user_ }) =
             client2.recv_msg().await.unwrap()
         {
@@ -111,26 +146,13 @@ mod test {
             assert!(false);
         }
 
-        client2.sync().await.unwrap();
-        sleep(Duration::from_millis(1)).await;
-        if let MessageType::Server(ServerMsg::Sync { messages, users }) =
-            client2.recv_msg().await.unwrap()
-        {
-            assert_eq!(messages[0].room_id, sended_msg.room_id);
-            assert_eq!(messages[0].sender_addr, sended_msg.sender_addr);
-            assert_eq!(messages[0].content, sended_msg.content);
-            assert_eq!(users[0], peermap.get(&user.addr.unwrap()).unwrap().clone());
-        } else {
-            assert!(false);
-        }
-
         sended_msg2.sender_addr = user2.addr.unwrap();
         client2
             .send_msg(Message::from((
                 UserMsg::Normal {
                     msg: sended_msg2.clone(),
                 },
-                room2.passwd.clone(),
+                header.passwd.clone(),
             )))
             .await
             .unwrap();
@@ -162,7 +184,7 @@ mod test {
                 UserReqMsg::BanReq {
                     addr: user2.addr.unwrap(),
                 },
-                room.passwd,
+                header.passwd,
             )))
             .await
             .unwrap();
@@ -189,14 +211,15 @@ mod test {
         client.disconnect();
         client2.disconnect();
 
-        let banned_addrs = db
-            .lock()
-            .unwrap()
-            .rooms
-            .find_one(None)
-            .unwrap()
-            .unwrap()
-            .banned_addrs;
-        assert_eq!(server.room.lock().unwrap().banned_addrs, banned_addrs);
+        assert_eq!(
+            server.room.lock().unwrap().banned_addrs,
+            db.lock()
+                .unwrap()
+                .server_rooms
+                .find_one(None)
+                .unwrap()
+                .unwrap()
+                .banned_addrs
+        );
     }
 }

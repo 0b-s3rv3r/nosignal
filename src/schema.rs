@@ -4,7 +4,13 @@ use serde::{ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer}
 use std::{net::SocketAddr, str::FromStr, time::SystemTime, usize};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
-pub struct Room {
+pub enum Room {
+    Server(ServerRoom),
+    Header(RoomHeader),
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+pub struct ServerRoom {
     pub _id: String,
     #[serde(deserialize_with = "des_soc_addr")]
     #[serde(serialize_with = "ser_soc_addr")]
@@ -13,7 +19,37 @@ pub struct Room {
     #[serde(deserialize_with = "des_soc_addr_vec")]
     #[serde(serialize_with = "ser_soc_addr_vec")]
     pub banned_addrs: Vec<SocketAddr>,
-    pub is_owner: bool,
+}
+
+impl ServerRoom {
+    pub fn room_header(&self) -> RoomHeader {
+        RoomHeader {
+            _id: self._id.clone(),
+            addr: self.addr.clone(),
+            passwd: self.passwd.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+pub struct RoomHeader {
+    pub _id: String,
+    #[serde(deserialize_with = "des_soc_addr")]
+    #[serde(serialize_with = "ser_soc_addr")]
+    pub addr: SocketAddr,
+    pub passwd: Option<String>,
+}
+
+impl Into<Room> for ServerRoom {
+    fn into(self) -> Room {
+        Room::Server(self)
+    }
+}
+
+impl Into<Room> for RoomHeader {
+    fn into(self) -> Room {
+        Room::Header(self)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -47,6 +83,7 @@ pub struct LocalData {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, EnumStringify)]
+#[serde(rename_all = "lowercase")]
 #[enum_stringify(case = "lower")]
 pub enum Color {
     Black,

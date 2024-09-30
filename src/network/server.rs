@@ -4,8 +4,9 @@ use super::{
 };
 use crate::{
     db::DbRepo,
-    schema::{Room, TextMessage},
+    schema::{ServerRoom, TextMessage},
 };
+use bson::doc;
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::{future, pin_mut, StreamExt, TryStreamExt};
 use log::{error, warn};
@@ -22,10 +23,7 @@ use tokio::{
 };
 use tokio_tungstenite::{
     accept_async,
-    tungstenite::{
-        protocol::{frame::coding::CloseCode, CloseFrame},
-        Error as TtError, Message as TtMessage,
-    },
+    tungstenite::{Error as TtError, Message as TtMessage},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -34,14 +32,14 @@ type PeerMap = Arc<Mutex<HashMap<SocketAddr, (Tx, Option<User>)>>>;
 type Db = Arc<Mutex<DbRepo>>;
 
 pub struct ChatServer {
-    pub(super) room: Arc<Mutex<Room>>,
+    pub(super) room: Arc<Mutex<ServerRoom>>,
     peer_map: PeerMap,
     db: Db,
     finisher: CancellationToken,
 }
 
 impl ChatServer {
-    pub async fn new(room: Room, db: Db) -> io::Result<Self> {
+    pub async fn new(room: ServerRoom, db: Db) -> io::Result<Self> {
         Ok(Self {
             peer_map: PeerMap::new(Mutex::new(HashMap::new())),
             room: Arc::new(Mutex::new(room)),
@@ -85,20 +83,7 @@ impl ChatServer {
                                             db.clone(),
                                             cloned_token_.clone(),
                                         ));
-                                    } else {
-                                        // let mut ws_stream = accept_async(stream).await.unwrap();
-                                        // if let Err(err) = ws_stream
-                                        //     .close(None)
-                                        //     // .close(Some(CloseFrame {
-                                        //     //     code: CloseCode::Policy,
-                                        //     //     reason: std::borrow::Cow::Borrowed(""),
-                                        //     // }))
-                                        //     .await
-                                        // {
-                                        //     error!("{}", err);
-                                        // }
-                                    }
-                                }
+                                    }                                 }
                                 Err(e) => {
                                     warn!("Failed to accept connection: {}", e);
                                 }
@@ -135,7 +120,7 @@ impl ChatServer {
         peer_map: PeerMap,
         stream: TcpStream,
         addr: SocketAddr,
-        room: Arc<Mutex<Room>>,
+        room: Arc<Mutex<ServerRoom>>,
         db: Db,
         finisher: CancellationToken,
     ) -> Result<(), TtError> {
@@ -145,6 +130,21 @@ impl ChatServer {
         peer_map.lock().unwrap().insert(addr, (tx, None));
 
         let (outgoing, incoming) = ws_stream.split();
+
+        let room_id = room.lock().unwrap()._id.clone();
+        let passwd = room.lock().unwrap().passwd.clone();
+        Self::send_to_one(
+            Message::from((
+                ServerMsg::Auth {
+                    user_addr: addr,
+                    room_id,
+                    passwd,
+                },
+                None,
+            )),
+            peer_map.clone(),
+            &addr,
+        );
 
         let broadcast_incoming = incoming.try_for_each(|msg| {
             Self::handle_message(
@@ -226,7 +226,7 @@ impl ChatServer {
         msg: Message,
         peer_map: PeerMap,
         addr: SocketAddr,
-        room: Arc<Mutex<Room>>,
+        room: Arc<Mutex<ServerRoom>>,
         db: Arc<Mutex<DbRepo>>,
     ) {
         if let Some(passwd) = &room.lock().unwrap().passwd {
@@ -240,6 +240,7 @@ impl ChatServer {
                         peer_map.clone(),
                         &addr,
                     );
+                    // peer_map.lock().unwrap().remove(&addr);
                     return;
                 }
             } else {
@@ -251,6 +252,7 @@ impl ChatServer {
                     peer_map.clone(),
                     &addr,
                 );
+                // peer_map.lock().unwrap().remove(&addr);
                 return;
             }
         }
@@ -293,21 +295,29 @@ impl ChatServer {
                         .lock()
                         .unwrap()
                         .messages
-                        .find(None)
+                        .find(doc! {"room_id": &room.lock().unwrap()._id})
                         .unwrap()
                         .into_iter()
                         .map(|msg| msg.unwrap())
                         .collect::<Vec<TextMessage>>();
 
-                    let mut users = peer_map
-                        .clone()
-                        .lock()
-                        .unwrap()
-                        .iter()
-                        .map(|(_, (_, user))| user.clone().unwrap())
-                        .collect::<Vec<User>>()
-                        .clone();
-                    users.retain(|user| user.addr.unwrap() != addr);
+                    let users = if peer_map.lock().unwrap().is_empty() {
+                        vec![]
+                    } else {
+                        peer_map
+                            .clone()
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .filter_map(|(_, (_, user))| {
+                                if user.is_some() {
+                                    return Some(user.clone().unwrap());
+                                }
+                                None
+                            })
+                            .collect::<Vec<User>>()
+                            .clone()
+                    };
 
                     Self::send_to_one(
                         Message::from((
@@ -330,7 +340,19 @@ impl ChatServer {
 
                     room.lock().unwrap().banned_addrs.push(banned_addr);
                     peer_map.lock().unwrap().remove(&banned_addr);
-                    if let Err(err) = db.lock().unwrap().room_update(&room.lock().unwrap()) {
+                    let result = db.lock().unwrap().server_rooms.update_one(
+                        doc! {"_id": room.lock().unwrap()._id.clone()},
+                        doc! {"$set": doc! {
+                            "banned_addrs": room
+                                .lock()
+                                .unwrap()
+                                .banned_addrs
+                                .iter()
+                                .map(|sa| sa.to_string())
+                                .collect::<Vec<String>>()
+                        }},
+                    );
+                    if let Err(err) = result {
                         error!("{}", err);
                     }
                 }

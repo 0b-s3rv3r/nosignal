@@ -11,12 +11,6 @@ pub struct Message {
     pub passwd: Option<String>,
 }
 
-impl Message {
-    pub fn new(msg_type: MessageType, passwd: Option<String>) -> Self {
-        Self { msg_type, passwd }
-    }
-}
-
 impl From<(MessageType, Option<String>)> for Message {
     fn from(value: (MessageType, Option<String>)) -> Self {
         let (msg_type, passwd) = value;
@@ -76,6 +70,11 @@ pub enum UserReqMsg {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum ServerMsg {
     AuthFailure,
+    Auth {
+        user_addr: SocketAddr,
+        room_id: String,
+        passwd: Option<String>,
+    },
     Sync {
         messages: Vec<TextMessage>,
         users: Vec<User>,
