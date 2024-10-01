@@ -42,7 +42,7 @@ mod test {
         hash_passwd(&passwd);
 
         let room = ServerRoom {
-            _id: "firstroom".into(),
+            id: "firstroom".into(),
             addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
             passwd: Some(passwd),
             banned_addrs: vec![],
@@ -97,7 +97,7 @@ mod test {
             assert!(false);
         }
 
-        let sended_msg = TextMessage::new(&user.addr.unwrap(), &header._id, "some short message");
+        let sended_msg = TextMessage::new(&user.addr.unwrap(), &header.id, "some short message");
         let mut sended_msg2 = sended_msg.clone();
         client
             .send_msg(Message::from((

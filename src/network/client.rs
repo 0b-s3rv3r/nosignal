@@ -164,7 +164,7 @@ impl ChatClient {
                     } => {
                         self.user.addr = Some(*user_addr);
                         let mut room = self.room.lock().unwrap();
-                        room._id = room_id.to_string();
+                        room.id = room_id.to_string();
                         room.passwd = passwd.clone();
                     }
                     _ => {}

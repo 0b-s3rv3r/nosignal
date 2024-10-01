@@ -48,7 +48,7 @@ impl<B: Backend> Tui<B> {
             .block(
                 Block::default()
                     .title_top(
-                        Line::from(app.client.room.lock().unwrap()._id.clone()).left_aligned(),
+                        Line::from(app.client.room.lock().unwrap().id.clone()).left_aligned(),
                     )
                     .title_bottom(Line::from("ctrl+[h]elp").right_aligned())
                     .borders(Borders::ALL)

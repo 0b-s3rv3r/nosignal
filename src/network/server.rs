@@ -131,7 +131,7 @@ impl ChatServer {
 
         let (outgoing, incoming) = ws_stream.split();
 
-        let room_id = room.lock().unwrap()._id.clone();
+        let room_id = room.lock().unwrap().id.clone();
         let passwd = room.lock().unwrap().passwd.clone();
         Self::send_to_one(
             Message::from((
@@ -295,7 +295,7 @@ impl ChatServer {
                         .lock()
                         .unwrap()
                         .messages
-                        .find(doc! {"room_id": &room.lock().unwrap()._id})
+                        .find(doc! {"room_id": &room.lock().unwrap().id})
                         .unwrap()
                         .into_iter()
                         .map(|msg| msg.unwrap())
@@ -341,7 +341,7 @@ impl ChatServer {
                     room.lock().unwrap().banned_addrs.push(banned_addr);
                     peer_map.lock().unwrap().remove(&banned_addr);
                     let result = db.lock().unwrap().server_rooms.update_one(
-                        doc! {"_id": room.lock().unwrap()._id.clone()},
+                        doc! {"id": room.lock().unwrap().id.clone()},
                         doc! {"$set": doc! {
                             "banned_addrs": room
                                 .lock()

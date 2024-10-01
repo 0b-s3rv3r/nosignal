@@ -160,7 +160,7 @@ impl<'a> ChatApp<'a> {
             if !self.parse_commands(&text).await {
                 let user = self.client.user.clone();
                 let room = self.client.room.lock().unwrap();
-                let msg = TextMessage::new(&user.addr.unwrap(), &room._id, &text);
+                let msg = TextMessage::new(&user.addr.unwrap(), &room.id, &text);
 
                 match self
                     .client
