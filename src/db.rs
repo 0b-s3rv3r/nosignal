@@ -11,26 +11,18 @@ pub struct DbRepo {
 }
 
 impl DbRepo {
-    pub fn init(filepath: &Path) -> pdbResult<Self> {
-        let db = Database::open_file(filepath)?;
+    pub fn init(filepath: Option<&Path>) -> pdbResult<Self> {
+        let db = if let Some(path) = filepath {
+            Database::open_file(path)?
+        } else {
+            Database::open_memory()?
+        };
 
         Ok(DbRepo {
-            server_rooms: db.collection::<ServerRoom>("server_rooms"),
-            room_headers: db.collection::<RoomHeader>("room_headers"),
-            messages: db.collection::<TextMessage>("messages"),
             local_data: db.collection::<LocalData>("local_data"),
-            _db: db,
-        })
-    }
-
-    pub fn memory_init() -> pdbResult<Self> {
-        let db = Database::open_memory()?;
-
-        Ok(DbRepo {
-            server_rooms: db.collection::<ServerRoom>("server_rooms"),
-            room_headers: db.collection::<RoomHeader>("room_headers"),
             messages: db.collection::<TextMessage>("messages"),
-            local_data: db.collection::<LocalData>("local_data"),
+            room_headers: db.collection::<RoomHeader>("room_headers"),
+            server_rooms: db.collection::<ServerRoom>("server_rooms"),
             _db: db,
         })
     }

@@ -11,7 +11,7 @@ pub enum Room {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct ServerRoom {
-    pub id: String,
+    pub _id: String,
     #[serde(deserialize_with = "des_soc_addr")]
     #[serde(serialize_with = "ser_soc_addr")]
     pub addr: SocketAddr,
@@ -24,7 +24,7 @@ pub struct ServerRoom {
 impl ServerRoom {
     pub fn room_header(&self) -> RoomHeader {
         RoomHeader {
-            id: self.id.clone(),
+            _id: self._id.clone(),
             addr: self.addr.clone(),
             passwd: self.passwd.clone(),
         }
@@ -33,7 +33,7 @@ impl ServerRoom {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct RoomHeader {
-    pub id: String,
+    pub _id: String,
     #[serde(deserialize_with = "des_soc_addr")]
     #[serde(serialize_with = "ser_soc_addr")]
     pub addr: SocketAddr,

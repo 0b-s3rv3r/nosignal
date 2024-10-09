@@ -28,22 +28,11 @@ impl From<(UserMsg, Option<String>)> for Message {
     }
 }
 
-impl From<(UserReqMsg, Option<String>)> for Message {
-    fn from(value: (UserReqMsg, Option<String>)) -> Self {
-        let (user_req, passwd) = value;
+impl From<ServerMsg> for Message {
+    fn from(value: ServerMsg) -> Self {
         Self {
-            msg_type: MessageType::UserReq(user_req),
-            passwd,
-        }
-    }
-}
-
-impl From<(ServerMsg, Option<String>)> for Message {
-    fn from(value: (ServerMsg, Option<String>)) -> Self {
-        let (server_msg, passwd) = value;
-        Self {
-            msg_type: MessageType::Server(server_msg),
-            passwd,
+            msg_type: MessageType::Server(value),
+            passwd: None,
         }
     }
 }
@@ -51,7 +40,6 @@ impl From<(ServerMsg, Option<String>)> for Message {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum MessageType {
     User(UserMsg),
-    UserReq(UserReqMsg),
     Server(ServerMsg),
 }
 
@@ -59,10 +47,7 @@ pub enum MessageType {
 pub enum UserMsg {
     Normal { msg: TextMessage },
     UserJoined { user: User },
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub enum UserReqMsg {
+    Auth,
     SyncReq,
     BanReq { addr: SocketAddr },
 }
@@ -70,12 +55,12 @@ pub enum UserReqMsg {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum ServerMsg {
     AuthFailure,
-    Auth {
-        user_addr: SocketAddr,
-        room_id: String,
-        passwd: Option<String>,
+    AuthReq {
+        passwd_required: bool,
     },
     Sync {
+        user_addr: SocketAddr,
+        room_id: String,
         messages: Vec<TextMessage>,
         users: Vec<User>,
     },

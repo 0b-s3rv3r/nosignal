@@ -1,5 +1,5 @@
 use super::{
-    message::{Message, MessageType, ServerMsg, UserMsg, UserReqMsg},
+    message::{Message, MessageType, ServerMsg, UserMsg},
     User,
 };
 use crate::schema::RoomHeader;
@@ -43,28 +43,6 @@ impl ChatClient {
 
         let (tx, mut rx) = mpsc::channel::<TtMessage>(100);
         let (tx_in, rx_in) = mpsc::channel::<TtMessage>(100);
-
-        tx.send(
-            Message::from((
-                UserReqMsg::SyncReq,
-                self.room.lock().unwrap().passwd.clone(),
-            ))
-            .to_ttmessage(),
-        )
-        .await
-        .unwrap();
-
-        tx.send(
-            Message::from((
-                UserMsg::UserJoined {
-                    user: self.user.clone(),
-                },
-                self.room.lock().unwrap().passwd.clone(),
-            ))
-            .to_ttmessage(),
-        )
-        .await
-        .unwrap();
 
         self.transceiver = Some(tx);
         self.in_receiver = Some(rx_in);
@@ -157,15 +135,11 @@ impl ChatClient {
                     ServerMsg::ServerShutdown => {
                         self.disconnect();
                     }
-                    ServerMsg::Auth {
-                        user_addr,
-                        room_id,
-                        passwd,
+                    ServerMsg::Sync {
+                        user_addr, room_id, ..
                     } => {
                         self.user.addr = Some(*user_addr);
-                        let mut room = self.room.lock().unwrap();
-                        room.id = room_id.to_string();
-                        room.passwd = passwd.clone();
+                        self.room.lock().unwrap()._id = room_id.to_string();
                     }
                     _ => {}
                 },
@@ -180,7 +154,7 @@ impl ChatClient {
     pub async fn ban(&self, addr: &SocketAddr) -> Result<(), SendError<TtMessage>> {
         Ok(self
             .send_msg(Message::from((
-                UserReqMsg::BanReq { addr: addr.clone() },
+                UserMsg::BanReq { addr: addr.clone() },
                 self.room.lock().unwrap().passwd.clone(),
             )))
             .await?)

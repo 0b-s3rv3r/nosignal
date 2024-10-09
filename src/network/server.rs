@@ -1,5 +1,5 @@
 use super::{
-    message::{Message, MessageType, ServerMsg, UserMsg, UserReqMsg},
+    message::{Message, MessageType, ServerMsg, UserMsg},
     User,
 };
 use crate::{
@@ -29,17 +29,17 @@ use tokio_util::sync::CancellationToken;
 
 type Tx = UnboundedSender<TtMessage>;
 type PeerMap = Arc<Mutex<HashMap<SocketAddr, (Tx, Option<User>)>>>;
-type Db = Arc<Mutex<DbRepo>>;
+type Unauthorized = bool;
 
 pub struct ChatServer {
     pub(super) room: Arc<Mutex<ServerRoom>>,
     peer_map: PeerMap,
-    db: Db,
+    db: Arc<Mutex<DbRepo>>,
     finisher: CancellationToken,
 }
 
 impl ChatServer {
-    pub async fn new(room: ServerRoom, db: Db) -> io::Result<Self> {
+    pub async fn new(room: ServerRoom, db: Arc<Mutex<DbRepo>>) -> io::Result<Self> {
         Ok(Self {
             peer_map: PeerMap::new(Mutex::new(HashMap::new())),
             room: Arc::new(Mutex::new(room)),
@@ -83,7 +83,8 @@ impl ChatServer {
                                             db.clone(),
                                             cloned_token_.clone(),
                                         ));
-                                    }                                 }
+                                    }
+                                }
                                 Err(e) => {
                                     warn!("Failed to accept connection: {}", e);
                                 }
@@ -108,7 +109,7 @@ impl ChatServer {
 
     pub async fn stop(&mut self) {
         Self::send_to_all(
-            Message::from((ServerMsg::ServerShutdown, None)),
+            Message::from(ServerMsg::ServerShutdown),
             self.peer_map.clone(),
             None,
         );
@@ -121,7 +122,7 @@ impl ChatServer {
         stream: TcpStream,
         addr: SocketAddr,
         room: Arc<Mutex<ServerRoom>>,
-        db: Db,
+        db: Arc<Mutex<DbRepo>>,
         finisher: CancellationToken,
     ) -> Result<(), TtError> {
         let ws_stream = accept_async(stream).await?;
@@ -131,29 +132,25 @@ impl ChatServer {
 
         let (outgoing, incoming) = ws_stream.split();
 
-        let room_id = room.lock().unwrap().id.clone();
-        let passwd = room.lock().unwrap().passwd.clone();
         Self::send_to_one(
-            Message::from((
-                ServerMsg::Auth {
-                    user_addr: addr,
-                    room_id,
-                    passwd,
-                },
-                None,
-            )),
+            Message::from(ServerMsg::AuthReq {
+                passwd_required: room.lock().unwrap().passwd.is_some(),
+            }),
             peer_map.clone(),
             &addr,
         );
 
+        // holy shit how ugly and stupid it is
+        let unauthorized = Arc::new(Mutex::new(false));
+        let first_joined = Arc::new(Mutex::new(false));
+
         let broadcast_incoming = incoming.try_for_each(|msg| {
-            Self::handle_message(
-                Message::from(msg),
-                peer_map.clone(),
-                addr,
-                room.clone(),
-                db.clone(),
-            );
+            let msg = Message::from(msg);
+            if let MessageType::User(UserMsg::UserJoined { .. }) = msg.msg_type {
+                *first_joined.lock().unwrap() = true;
+            }
+            *unauthorized.clone().lock().unwrap() =
+                Self::handle_message(msg, peer_map.clone(), addr, room.clone(), db.clone());
 
             if let Some(_) = room
                 .lock()
@@ -179,14 +176,16 @@ impl ChatServer {
 
         peer_map.lock().unwrap().remove(&addr);
 
-        Self::send_to_all(
-            Message {
-                msg_type: MessageType::Server(ServerMsg::UserLeft { addr }),
-                passwd: None,
-            },
-            peer_map,
-            None,
-        );
+        if !*unauthorized.lock().unwrap() && *first_joined.lock().unwrap() {
+            Self::send_to_all(
+                Message {
+                    msg_type: MessageType::Server(ServerMsg::UserLeft { addr }),
+                    passwd: None,
+                },
+                peer_map,
+                None,
+            );
+        }
 
         Ok(())
     }
@@ -228,7 +227,7 @@ impl ChatServer {
         addr: SocketAddr,
         room: Arc<Mutex<ServerRoom>>,
         db: Arc<Mutex<DbRepo>>,
-    ) {
+    ) -> Unauthorized {
         if let Some(passwd) = &room.lock().unwrap().passwd {
             if let Some(msg_passwd) = &msg.passwd {
                 if msg_passwd != passwd {
@@ -241,7 +240,7 @@ impl ChatServer {
                         &addr,
                     );
                     // peer_map.lock().unwrap().remove(&addr);
-                    return;
+                    return true;
                 }
             } else {
                 Self::send_to_one(
@@ -253,7 +252,7 @@ impl ChatServer {
                     &addr,
                 );
                 // peer_map.lock().unwrap().remove(&addr);
-                return;
+                return true;
             }
         }
 
@@ -271,7 +270,10 @@ impl ChatServer {
                         peer_map.clone(),
                         Some(&addr),
                     );
-                    db.lock().unwrap().messages.insert_one(text_msg).unwrap();
+                    if let Err(err) = db.lock().unwrap().messages.insert_one(text_msg) {
+                        error!("{}", err);
+                    }
+                    println!("message inserted");
                 }
                 UserMsg::UserJoined { user } => {
                     let mut updated_user = user;
@@ -288,18 +290,22 @@ impl ChatServer {
                     );
                     peer_map.lock().unwrap().get_mut(&addr).unwrap().1 = Some(updated_user);
                 }
-            },
-            MessageType::UserReq(user_req) => match user_req {
-                UserReqMsg::SyncReq => {
-                    let messages = db
+                UserMsg::SyncReq => {
+                    let messages_result = db
                         .lock()
                         .unwrap()
                         .messages
-                        .find(doc! {"room_id": &room.lock().unwrap().id})
+                        .find(doc! {"room_id": &room.lock().unwrap()._id});
+                    if let Err(ref err) = messages_result {
+                        error!("{}", err);
+                    }
+
+                    let messages = messages_result
                         .unwrap()
                         .into_iter()
                         .map(|msg| msg.unwrap())
                         .collect::<Vec<TextMessage>>();
+                    println!("messages fetched");
 
                     let users = if peer_map.lock().unwrap().is_empty() {
                         vec![]
@@ -319,21 +325,22 @@ impl ChatServer {
                             .clone()
                     };
 
+                    let user_addr = room.lock().unwrap().addr.clone();
+                    let room_id = room.lock().unwrap()._id.clone();
                     Self::send_to_one(
-                        Message::from((
-                            ServerMsg::Sync { messages, users },
-                            room.lock().unwrap().passwd.clone(),
-                        )),
+                        Message::from(ServerMsg::Sync {
+                            messages,
+                            users,
+                            user_addr,
+                            room_id,
+                        }),
                         peer_map.clone(),
                         &addr,
                     );
                 }
-                UserReqMsg::BanReq { addr: banned_addr } => {
+                UserMsg::BanReq { addr: banned_addr } => {
                     Self::send_to_all(
-                        Message::from((
-                            ServerMsg::BanConfirm { addr: banned_addr },
-                            room.lock().unwrap().passwd.clone(),
-                        )),
+                        Message::from(ServerMsg::BanConfirm { addr: banned_addr }),
                         peer_map.clone(),
                         None,
                     );
@@ -341,7 +348,7 @@ impl ChatServer {
                     room.lock().unwrap().banned_addrs.push(banned_addr);
                     peer_map.lock().unwrap().remove(&banned_addr);
                     let result = db.lock().unwrap().server_rooms.update_one(
-                        doc! {"id": room.lock().unwrap().id.clone()},
+                        doc! {"_id": room.lock().unwrap()._id.clone()},
                         doc! {"$set": doc! {
                             "banned_addrs": room
                                 .lock()
@@ -356,8 +363,10 @@ impl ChatServer {
                         error!("{}", err);
                     }
                 }
+                _ => {}
             },
             _ => {}
         }
+        false
     }
 }

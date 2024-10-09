@@ -69,9 +69,9 @@ pub fn setup_logger(log_path: Option<&Path>) -> Result<(), fern::InitError> {
         .chain(if let Some(log_path) = log_path {
             Dispatch::new()
                 .level(LevelFilter::Error)
-                .chain(fern::Panic)
-                .chain(std::io::stdout())
                 .chain(fern::log_file(&log_path)?)
+                .chain(std::io::stdout())
+                .chain(fern::Panic)
         } else {
             Dispatch::new()
                 .level(LevelFilter::Error)

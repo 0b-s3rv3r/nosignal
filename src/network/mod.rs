@@ -20,7 +20,7 @@ mod test {
         network::{
             client::ChatClient,
             message::MessageType,
-            message::{Message, ServerMsg, UserMsg, UserReqMsg},
+            message::{Message, ServerMsg, UserMsg},
             server::ChatServer,
             User,
         },
@@ -42,7 +42,7 @@ mod test {
         hash_passwd(&passwd);
 
         let room = ServerRoom {
-            id: "firstroom".into(),
+            _id: "firstroom".into(),
             addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
             passwd: Some(passwd),
             banned_addrs: vec![],
@@ -60,7 +60,7 @@ mod test {
             color: Color::LightGreen,
         };
 
-        let db = Arc::new(Mutex::new(DbRepo::memory_init().unwrap()));
+        let db = Arc::new(Mutex::new(DbRepo::init(None).unwrap()));
         db.lock()
             .unwrap()
             .server_rooms
@@ -76,13 +76,14 @@ mod test {
         client.connect().await.unwrap();
         sleep(Duration::from_secs(1)).await;
 
-        if let MessageType::Server(ServerMsg::Auth { user_addr, .. }) =
+        if let MessageType::Server(ServerMsg::AuthReq { user_addr, .. }) =
             client.recv_msg().await.unwrap()
         {
             user.addr = Some(user_addr);
         } else {
             assert!(false);
         }
+        sleep(Duration::from_millis(1)).await;
         if let MessageType::Server(ServerMsg::Sync { .. }) = client.recv_msg().await.unwrap() {
             assert!(true);
         } else {
@@ -97,7 +98,7 @@ mod test {
             assert!(false);
         }
 
-        let sended_msg = TextMessage::new(&user.addr.unwrap(), &header.id, "some short message");
+        let sended_msg = TextMessage::new(&user.addr.unwrap(), &header._id, "some short message");
         let mut sended_msg2 = sended_msg.clone();
         client
             .send_msg(Message::from((
@@ -113,7 +114,7 @@ mod test {
         client2.connect().await.unwrap();
         sleep(Duration::from_millis(1)).await;
 
-        if let MessageType::Server(ServerMsg::Auth { user_addr, .. }) =
+        if let MessageType::Server(ServerMsg::AuthReq { user_addr, .. }) =
             client2.recv_msg().await.unwrap()
         {
             user2.addr = Some(user_addr);
@@ -181,7 +182,7 @@ mod test {
 
         client
             .send_msg(Message::from((
-                UserReqMsg::BanReq {
+                UserMsg::BanReq {
                     addr: user2.addr.unwrap(),
                 },
                 header.passwd,

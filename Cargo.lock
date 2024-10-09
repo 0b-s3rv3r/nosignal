@@ -1079,9 +1079,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "polodb_core"
-version = "4.4.1"
+version = "4.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95b09216dafcdd6fcd527fad491604b3d2013a7fabdf010549264a18e5ef8644"
+checksum = "714bc48cfa44e6713512efabffe69887e564e5d88b0fdc83d27c0c1d3137e857"
 dependencies = [
  "bson",
  "byteorder",

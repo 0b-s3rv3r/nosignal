@@ -15,12 +15,6 @@ async fn main() {
     if let Err(err) = run(get_command_request()).await {
         match err {
             AppError::PdbError(err) => error!("{}", err),
-            // match err {
-            //     polodb_core::Error::UnexpectedIdType(_, _)
-            //     | polodb_core::Error::BsonErr(_)
-            //     | polodb_core::Error::BsonDeErr(_) => println!("Invalid arguments!"),
-            //     _ => error!("{}", err),
-            // },
             AppError::IoError(err) => error!("{}", err),
             AppError::AlreadyExistingId => println!("{}", err),
             AppError::DataNotFound => println!("{}", err),
@@ -37,6 +31,7 @@ async fn main() {
 
 // use db::DbRepo;
 // use log::{error, warn};
+// use network::message::{Message, MessageType, ServerMsg, UserMsg};
 // use network::server::ChatServer;
 // use network::{client::ChatClient, User};
 // use schema::{Color, ServerRoom};
@@ -47,19 +42,24 @@ async fn main() {
 // use std::{env, io};
 // use tokio::time::sleep;
 // use tui::chat_app::ChatApp;
-// use util::setup_logger;
+// use util::{passwd_input, setup_logger};
 //
-
 // #[tokio::main]
 // async fn main() -> io::Result<()> {
 //     let t = env::args().nth(1).unwrap();
 //
 //     setup_logger(None).unwrap();
 //
+//     let passwd = if t.as_str() == "server" {
+//         Some(passwd_input())
+//     } else {
+//         None
+//     };
+//
 //     let room = ServerRoom {
 //         _id: "firstroom".into(),
 //         addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
-//         passwd: None,
+//         passwd,
 //         banned_addrs: vec![],
 //     };
 //
@@ -77,15 +77,15 @@ async fn main() {
 //         color: Color::LightGreen,
 //     };
 //
-//     let db = Arc::new(Mutex::new(DbRepo::memory_init().unwrap()));
+//     let db = Arc::new(Mutex::new(DbRepo::init(None).unwrap()));
 //
 //     match t.as_str() {
 //         "server" => {
-//             let mut server = ChatServer::new(room, db).await.unwrap();
+//             let mut server = ChatServer::new(room.clone(), db).await.unwrap();
 //             server.run().await.unwrap();
 //             sleep(Duration::from_secs(1)).await;
 //
-//             let mut client = ChatClient::new(room_header, user);
+//             let mut client = ChatClient::new(room_header, user.clone());
 //             if client.connect().await.is_err() {
 //                 error!("Unable to connect");
 //                 return Ok(());
@@ -96,22 +96,67 @@ async fn main() {
 //                 return Ok(());
 //             }
 //
+//             client
+//                 .send_msg(Message::from((UserMsg::SyncReq, room.passwd.clone())))
+//                 .await
+//                 .unwrap();
+//
+//             client
+//                 .send_msg(Message::from((
+//                     UserMsg::UserJoined { user: user.clone() },
+//                     room.passwd.clone(),
+//                 )))
+//                 .await
+//                 .unwrap();
+//
 //             let mut app = ChatApp::new(client, false);
 //             app.run().await.unwrap();
 //
 //             server.stop().await;
 //         }
 //         "client" => {
-//             let mut client = ChatClient::new(room_header.clone(), user2);
+//             let mut client = ChatClient::new(room_header.clone(), user2.clone());
 //             if client.connect().await.is_err() {
 //                 warn!("Connection refused from server {}", room_header._id);
 //                 println!("Connection refused");
 //                 return Ok(());
 //             }
 //             sleep(Duration::from_secs(1)).await;
+//             while let Some(MessageType::Server(ServerMsg::AuthReq { passwd_required })) =
+//                 client.recv_msg().await
+//             {
+//                 if passwd_required {
+//                     if passwd_required {
+//                         client
+//                             .send_msg(Message::from((UserMsg::Auth, Some(passwd_input()))))
+//                             .await
+//                             .unwrap();
+//                     }
+//                 }
+//             }
+//
+//             client
+//                 .send_msg(Message::from((
+//                     UserMsg::SyncReq,
+//                     client.room.lock().unwrap().passwd.clone(),
+//                 )))
+//                 .await
+//                 .unwrap();
+//
+//             client
+//                 .send_msg(Message::from((
+//                     UserMsg::UserJoined {
+//                         user: user2.clone(),
+//                     },
+//                     client.room.lock().unwrap().passwd.clone(),
+//                 )))
+//                 .await
+//                 .unwrap();
 //
 //             let mut app = ChatApp::new(client, false);
-//             app.run().await.unwrap();
+//             if app.run().await.is_err() {
+//                 println!("Authorization failure");
+//             }
 //         }
 //         _ => {}
 //     }

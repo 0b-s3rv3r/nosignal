@@ -160,7 +160,7 @@ impl<'a> ChatApp<'a> {
             if !self.parse_commands(&text).await {
                 let user = self.client.user.clone();
                 let room = self.client.room.lock().unwrap();
-                let msg = TextMessage::new(&user.addr.unwrap(), &room.id, &text);
+                let msg = TextMessage::new(&user.addr.unwrap(), &room._id, &text);
 
                 match self
                     .client
@@ -211,6 +211,7 @@ impl<'a> ChatApp<'a> {
                             Color::Rgb(75, 75, 75).into(),
                         ));
                     }
+                    _ => {}
                 },
                 MessageType::Server(server_msg) => match server_msg {
                     ServerMsg::Sync {
@@ -272,7 +273,6 @@ impl<'a> ChatApp<'a> {
                     }
                     _ => {}
                 },
-                _ => {}
             }
         }
         if !self.messages.is_highlighted {
