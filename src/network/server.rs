@@ -140,7 +140,7 @@ impl ChatServer {
             &addr,
         );
 
-        // holy shit how ugly and stupid it is
+        // how ugly and stupid it is
         let unauthorized = Arc::new(Mutex::new(false));
         let first_joined = Arc::new(Mutex::new(false));
 
@@ -152,13 +152,9 @@ impl ChatServer {
             *unauthorized.clone().lock().unwrap() =
                 Self::handle_message(msg, peer_map.clone(), addr, room.clone(), db.clone());
 
-            if let Some(_) = room
-                .lock()
-                .unwrap()
-                .banned_addrs
-                .iter()
-                .find(|&&a| a == addr)
-            {
+            let is_banned = room.lock().unwrap().banned_addrs.iter().any(|&a| a == addr);
+
+            if is_banned {
                 return future::err(TtError::ConnectionClosed);
             }
 
@@ -214,7 +210,7 @@ impl ChatServer {
     fn send_to_one(msg: Message, peer_map: PeerMap, addr: &SocketAddr) {
         let recp = {
             let peers = peer_map.lock().unwrap();
-            peers.get(&addr).unwrap().0.clone()
+            peers.get(addr).unwrap().0.clone()
         };
         if let Err(err) = recp.unbounded_send(msg.to_ttmessage()) {
             warn!("{}", err);
@@ -239,7 +235,7 @@ impl ChatServer {
                         peer_map.clone(),
                         &addr,
                     );
-                    // peer_map.lock().unwrap().remove(&addr);
+                    println!("tutaj nie ma autoryzacji");
                     return true;
                 }
             } else {
@@ -251,13 +247,13 @@ impl ChatServer {
                     peer_map.clone(),
                     &addr,
                 );
-                // peer_map.lock().unwrap().remove(&addr);
+                println!("tutaj nie ma autoryzacji");
                 return true;
             }
         }
 
-        match msg.msg_type {
-            MessageType::User(user_msg) => match user_msg {
+        if let MessageType::User(user_msg) = msg.msg_type {
+            match user_msg {
                 UserMsg::Normal { msg: mut text_msg } => {
                     text_msg.timestamp = Some(SystemTime::now());
                     Self::send_to_all(
@@ -273,39 +269,40 @@ impl ChatServer {
                     if let Err(err) = db.lock().unwrap().messages.insert_one(text_msg) {
                         error!("{}", err);
                     }
-                    println!("message inserted");
                 }
                 UserMsg::UserJoined { user } => {
                     let mut updated_user = user;
                     updated_user.addr = Some(addr);
                     Self::send_to_all(
                         Message::from((
-                            UserMsg::UserJoined {
-                                user: updated_user.clone(),
-                            },
+                            UserMsg::UserJoined { user: updated_user },
                             room.lock().unwrap().passwd.clone(),
                         )),
                         peer_map.clone(),
-                        None,
+                        Some(&addr),
                     );
-                    peer_map.lock().unwrap().get_mut(&addr).unwrap().1 = Some(updated_user);
                 }
-                UserMsg::SyncReq => {
+                UserMsg::SyncReq { user } => {
+                    let mut updated_user = user;
+                    updated_user.addr = Some(addr);
+                    peer_map.lock().unwrap().get_mut(&addr).unwrap().1 = Some(updated_user);
+
                     let messages_result = db
                         .lock()
                         .unwrap()
                         .messages
                         .find(doc! {"room_id": &room.lock().unwrap()._id});
-                    if let Err(ref err) = messages_result {
-                        error!("{}", err);
-                    }
 
-                    let messages = messages_result
-                        .unwrap()
-                        .into_iter()
-                        .map(|msg| msg.unwrap())
-                        .collect::<Vec<TextMessage>>();
-                    println!("messages fetched");
+                    let messages = match messages_result {
+                        Ok(msgs) => msgs
+                            .into_iter()
+                            .map(|msg| msg.unwrap())
+                            .collect::<Vec<TextMessage>>(),
+                        Err(err) => {
+                            warn!("{}", err);
+                            vec![]
+                        }
+                    };
 
                     let users = if peer_map.lock().unwrap().is_empty() {
                         vec![]
@@ -325,13 +322,12 @@ impl ChatServer {
                             .clone()
                     };
 
-                    let user_addr = room.lock().unwrap().addr.clone();
                     let room_id = room.lock().unwrap()._id.clone();
                     Self::send_to_one(
                         Message::from(ServerMsg::Sync {
                             messages,
                             users,
-                            user_addr,
+                            user_addr: addr,
                             room_id,
                         }),
                         peer_map.clone(),
@@ -364,8 +360,7 @@ impl ChatServer {
                     }
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
         false
     }

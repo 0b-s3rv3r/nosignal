@@ -57,14 +57,14 @@ impl ChatClient {
                 }
                 match msg {
                     Ok(msg) => {
-                        if tx_in.send(msg).await.is_err() {
+                        if let Err(err) = tx_in.send(msg).await {
                             rcancel_token.cancel();
-                            error!("Receiver dropped");
+                            error!("Receiver dropped: {}", err);
                         }
                     }
                     Err(e) => {
                         rcancel_token.cancel();
-                        error!("Error reading message {}", e);
+                        warn!("Error reading message {}", e);
                     }
                 }
             }
@@ -83,7 +83,7 @@ impl ChatClient {
                         }
                         _ => {
                             wcancel_token.cancel();
-                            error!("Error sending message: {}", e);
+                            warn!("Error sending message: {}", e);
                         }
                     }
                 }
@@ -117,13 +117,10 @@ impl ChatClient {
                 return None;
             }
 
-            let msg_result = receiver.recv().await;
-            if msg_result.is_none() {
-                return None;
-            }
-            let msg_type = Message::from(msg_result.unwrap()).msg_type;
-            match &msg_type {
-                MessageType::Server(server_msg) => match server_msg {
+            let msg_result = receiver.recv().await?;
+            let msg_type = Message::from(msg_result).msg_type;
+            if let MessageType::Server(server_msg) = &msg_type {
+                match server_msg {
                     ServerMsg::AuthFailure => {
                         self.disconnect();
                     }
@@ -142,8 +139,7 @@ impl ChatClient {
                         self.room.lock().unwrap()._id = room_id.to_string();
                     }
                     _ => {}
-                },
-                _ => {}
+                }
             }
 
             return Some(msg_type);
@@ -152,11 +148,10 @@ impl ChatClient {
     }
 
     pub async fn ban(&self, addr: &SocketAddr) -> Result<(), SendError<TtMessage>> {
-        Ok(self
-            .send_msg(Message::from((
-                UserMsg::BanReq { addr: addr.clone() },
-                self.room.lock().unwrap().passwd.clone(),
-            )))
-            .await?)
+        self.send_msg(Message::from((
+            UserMsg::BanReq { addr: *addr },
+            self.room.lock().unwrap().passwd.clone(),
+        )))
+        .await
     }
 }

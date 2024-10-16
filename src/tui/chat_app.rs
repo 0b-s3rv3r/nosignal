@@ -61,10 +61,8 @@ impl<'a> ChatApp<'a> {
         tui.term_init()?;
 
         while self.running {
-            if self.client.is_ok() {
-                if !self.handle_msgs().await {
-                    return Err(AppError::AuthFailure);
-                }
+            if self.client.is_ok() && !self.handle_msgs().await {
+                return Err(AppError::AuthFailure);
             }
             tui.draw(self)?;
             self.handle_input().await?;
@@ -84,11 +82,11 @@ impl<'a> ChatApp<'a> {
                     self.current_popup = PopupState::None;
                 }
             }
-
-            match key_event {
-                Event::Key(KeyEvent {
-                    code, modifiers, ..
-                }) => match code {
+            if let Event::Key(KeyEvent {
+                code, modifiers, ..
+            }) = key_event
+            {
+                match code {
                     KeyCode::Left => {
                         self.msg_area.textarea.move_cursor(CursorMove::Back);
                     }
@@ -128,8 +126,6 @@ impl<'a> ChatApp<'a> {
                     KeyCode::Char('h') if modifiers.contains(KeyModifiers::CONTROL) => {
                         if self.current_popup == PopupState::Help {
                             self.current_popup = PopupState::None;
-                        } else {
-                            self.current_popup = PopupState::None;
                         }
                         self.current_popup = PopupState::Help;
                     }
@@ -146,8 +142,7 @@ impl<'a> ChatApp<'a> {
                         self.messages.is_highlighted = false;
                         self.msg_area.on_input_update(key_event.into());
                     }
-                },
-                _ => (),
+                }
             }
         }
         Ok(())
@@ -208,7 +203,7 @@ impl<'a> ChatApp<'a> {
 
                         self.messages.items.push(MsgItem::info_msg(
                             format!("{} has joined", user.id),
-                            Color::Rgb(75, 75, 75).into(),
+                            Color::Rgb(75, 75, 75),
                         ));
                     }
                     _ => {}
@@ -230,7 +225,7 @@ impl<'a> ChatApp<'a> {
                                 .map(|msg| {
                                     let user = self.users.get(&msg.sender_addr).unwrap();
                                     MsgItem::user_msg(
-                                        &msg,
+                                        msg,
                                         user.color.clone(),
                                         &self.style,
                                         user.id.clone(),
@@ -243,7 +238,7 @@ impl<'a> ChatApp<'a> {
                     ServerMsg::UserLeft { addr } => {
                         self.messages.items.push(MsgItem::info_msg(
                             format!("{} has left", self.users.get(&addr).unwrap().id),
-                            Color::Rgb(75, 75, 75).into(),
+                            Color::Rgb(75, 75, 75),
                         ));
                         self.users.remove(&addr).unwrap();
                     }
@@ -257,14 +252,14 @@ impl<'a> ChatApp<'a> {
                         } else {
                             self.messages.items.push(MsgItem::info_msg(
                                 format!("{} has been banned", self.users.get(&addr).unwrap().id),
-                                Color::Rgb(75, 75, 75).into(),
+                                Color::Rgb(75, 75, 75),
                             ));
                         }
                     }
                     ServerMsg::ServerShutdown => {
                         self.messages.items.push(MsgItem::info_msg(
                             String::from("Server has been shutted down."),
-                            Color::Rgb(75, 75, 75).into(),
+                            Color::Rgb(75, 75, 75),
                         ));
                     }
                     ServerMsg::AuthFailure => {
@@ -330,6 +325,3 @@ type Command = (Regex, Action);
 pub enum Action {
     Ban,
 }
-
-#[cfg(test)]
-mod test {}

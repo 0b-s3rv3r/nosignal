@@ -48,7 +48,7 @@ pub enum UserMsg {
     Normal { msg: TextMessage },
     UserJoined { user: User },
     Auth,
-    SyncReq,
+    SyncReq { user: User },
     BanReq { addr: SocketAddr },
 }
 

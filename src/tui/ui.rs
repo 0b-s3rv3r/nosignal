@@ -300,7 +300,7 @@ impl MsgItem {
     pub fn info_msg<'a>(msg: String, color: Color) -> Text<'a> {
         let mut text = Text::from(msg);
         text.push_line("");
-        text.style(Style::new().fg(color.into()).italic())
+        text.style(Style::new().fg(color).italic())
     }
 
     pub fn user_msg<'a>(

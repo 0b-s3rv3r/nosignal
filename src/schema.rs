@@ -1,7 +1,7 @@
 use enum_stringify::EnumStringify;
 use ratatui::style::Color as ratColor;
 use serde::{ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer};
-use std::{net::SocketAddr, str::FromStr, time::SystemTime, usize};
+use std::{net::SocketAddr, str::FromStr, time::SystemTime};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum Room {
@@ -25,7 +25,7 @@ impl ServerRoom {
     pub fn room_header(&self) -> RoomHeader {
         RoomHeader {
             _id: self._id.clone(),
-            addr: self.addr.clone(),
+            addr: self.addr,
             passwd: self.passwd.clone(),
         }
     }
@@ -40,15 +40,15 @@ pub struct RoomHeader {
     pub passwd: Option<String>,
 }
 
-impl Into<Room> for ServerRoom {
-    fn into(self) -> Room {
-        Room::Server(self)
+impl From<ServerRoom> for Room {
+    fn from(val: ServerRoom) -> Self {
+        Room::Server(val)
     }
 }
 
-impl Into<Room> for RoomHeader {
-    fn into(self) -> Room {
-        Room::Header(self)
+impl From<RoomHeader> for Room {
+    fn from(val: RoomHeader) -> Self {
+        Room::Header(val)
     }
 }
 
@@ -104,9 +104,9 @@ pub enum Color {
     White,
 }
 
-impl Into<ratColor> for Color {
-    fn into(self) -> ratColor {
-        match self {
+impl From<Color> for ratColor {
+    fn from(val: Color) -> Self {
+        match val {
             Color::Black => ratColor::Black,
             Color::Red => ratColor::Red,
             Color::Green => ratColor::Green,

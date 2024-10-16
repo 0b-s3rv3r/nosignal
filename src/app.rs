@@ -57,7 +57,7 @@ pub fn db_init(db_path: Option<&Path>) -> pdbResult<DbRepo> {
     let db = DbRepo::init(db_path)?;
 
     if db.local_data.count_documents()? == 0 {
-        db.local_data.insert_one(&LocalData {
+        db.local_data.insert_one(LocalData {
             id: 0,
             user_id: get_unique_id(),
             room_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 12345),
@@ -80,7 +80,7 @@ fn create_room(db: &DbRepo, room_id: &str, password: bool) -> Result<(), AppErro
         .room_addr;
     let passwd = if password { Some(passwd_input()) } else { None };
 
-    db.server_rooms.insert_one(&ServerRoom {
+    db.server_rooms.insert_one(ServerRoom {
         _id: room_id.into(),
         addr,
         passwd,
@@ -162,19 +162,14 @@ async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), A
                 server.run().await.unwrap();
                 sleep(Duration::from_secs(1)).await;
 
-                println!("server joined");
-
                 let mut client = ChatClient::new(room_header, user);
                 if client.connect().await.is_err() {
                     return Err(AppError::ConnectionRefused);
                 }
-                println!("client joining");
                 sleep(Duration::from_secs(1)).await;
                 if !client.is_ok() {
                     return Err(AppError::ConnectionRefused);
                 }
-
-                println!("client joined");
 
                 let mut app = ChatApp::new(client, false);
                 app.run().await?;
@@ -203,7 +198,7 @@ async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), A
 
                 client
                     .send_msg(Message::from((
-                        UserMsg::SyncReq,
+                        UserMsg::SyncReq { user: user.clone() },
                         client.room.lock().unwrap().passwd.clone(),
                     )))
                     .await
@@ -262,7 +257,7 @@ async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), A
 
             client
                 .send_msg(Message::from((
-                    UserMsg::SyncReq,
+                    UserMsg::SyncReq { user: user.clone() },
                     client.room.lock().unwrap().passwd.clone(),
                 )))
                 .await
