@@ -10,6 +10,7 @@ use bson::doc;
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::{future, pin_mut, StreamExt, TryStreamExt};
 use log::{error, warn};
+use polodb_core::CollectionT;
 use std::{
     collections::HashMap,
     io,
@@ -291,7 +292,8 @@ impl ChatServer {
                         .lock()
                         .unwrap()
                         .messages
-                        .find(doc! {"room_id": &room.lock().unwrap()._id});
+                        .find(doc! {"room_id": &room.lock().unwrap()._id})
+                        .run();
 
                     let messages = match messages_result {
                         Ok(msgs) => msgs

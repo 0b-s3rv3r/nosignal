@@ -11,12 +11,8 @@ pub struct DbRepo {
 }
 
 impl DbRepo {
-    pub fn init(filepath: Option<&Path>) -> pdbResult<Self> {
-        let db = if let Some(path) = filepath {
-            Database::open_file(path)?
-        } else {
-            Database::open_memory()?
-        };
+    pub fn init(filepath: &Path) -> pdbResult<Self> {
+        let db = Database::open_path(filepath)?;
 
         Ok(DbRepo {
             local_data: db.collection::<LocalData>("local_data"),

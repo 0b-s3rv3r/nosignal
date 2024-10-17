@@ -13,7 +13,7 @@ use crate::{
 };
 use clap::{Arg, ArgMatches, Command};
 use crossterm::style::Stylize;
-use polodb_core::{bson::doc, Result as pdbResult};
+use polodb_core::{bson::doc, CollectionT, Result as pdbResult};
 use std::{
     env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -32,7 +32,7 @@ pub async fn run(cmd_req: CommandRequest) -> Result<(), AppError> {
     setup_logger(Some(&log_path)).expect(format!("{}", "Failed to set up logger.".red()).as_str());
 
     let db_path = path.join("db.db");
-    let db = Arc::new(Mutex::new(db_init(Some(&db_path))?));
+    let db = Arc::new(Mutex::new(db_init(&db_path)?));
     run_option(cmd_req, db).await?;
     Ok(())
 }
@@ -53,7 +53,7 @@ async fn run_option(cmd_req: CommandRequest, db: Arc<Mutex<DbRepo>>) -> Result<(
     Ok(())
 }
 
-pub fn db_init(db_path: Option<&Path>) -> pdbResult<DbRepo> {
+pub fn db_init(db_path: &Path) -> pdbResult<DbRepo> {
     let db = DbRepo::init(db_path)?;
 
     if db.local_data.count_documents()? == 0 {
@@ -126,8 +126,8 @@ fn list_rooms_and_local_data(db: &DbRepo) -> Result<(), AppError> {
     println!("{}", local_data_print);
 
     println!("\nRooms:");
-    let server_rooms = db.server_rooms.find(doc! {})?;
-    let room_headers = db.room_headers.find(doc! {})?;
+    let server_rooms = db.server_rooms.find(doc! {}).run()?;
+    let room_headers = db.room_headers.find(doc! {}).run()?;
     server_rooms.for_each(|el| {
         let room = el.unwrap();
         println!(" {}: {} [host]", room._id, room.addr.to_string());
