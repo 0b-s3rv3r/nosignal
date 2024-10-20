@@ -898,42 +898,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kioto"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "bson",
- "chrono",
- "clap",
- "crossterm",
- "dirs",
- "enum_stringify",
- "enumn",
- "fern",
- "futures",
- "futures-channel",
- "futures-timer",
- "futures-util",
- "humantime",
- "log",
- "polodb_core",
- "ratatui",
- "regex",
- "rpassword",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite",
- "tokio-util",
- "tui-pattern-highlighter",
- "tui-popup",
- "tui-textarea",
- "uuid",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1054,6 +1018,42 @@ checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
 dependencies = [
  "memchr",
  "minimal-lexical",
+]
+
+[[package]]
+name = "nosignal"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "bson",
+ "chrono",
+ "clap",
+ "crossterm",
+ "dirs",
+ "enum_stringify",
+ "enumn",
+ "fern",
+ "futures",
+ "futures-channel",
+ "futures-timer",
+ "futures-util",
+ "humantime",
+ "log",
+ "polodb_core",
+ "ratatui",
+ "regex",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite",
+ "tokio-util",
+ "tui-pattern-highlighter",
+ "tui-popup",
+ "tui-textarea",
+ "uuid",
 ]
 
 [[package]]

@@ -26,7 +26,7 @@ use tokio::time::sleep;
 use tokio_util::either::Either;
 
 pub async fn run(cmd_req: CommandRequest) -> Result<(), AppError> {
-    let path = create_env_dir("kioto")?;
+    let path = create_env_dir("nosignal")?;
 
     let log_path = path.join("errors.log");
     setup_logger(Some(&log_path)).expect(format!("{}", "Failed to set up logger.".red()).as_str());
@@ -405,7 +405,7 @@ pub fn get_command_request() -> CommandRequest {
 }
 
 fn config_clap() -> ArgMatches {
-    Command::new("kioto")
+    Command::new("nosignal")
         .about("Yet another tui chat.")
         .version(env!("CARGO_PKG_VERSION"))
         .subcommand_required(true)

@@ -1,4 +1,4 @@
-# 💬kioto
+# 💬nosignal
 
 Single-executable and minimalistic tui chat written with spaghetti code.
 
