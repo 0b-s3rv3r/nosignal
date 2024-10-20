@@ -74,7 +74,7 @@ mod test {
 
         client
             .send_msg(UserMsg::SyncReq {
-                user: client.user.clone(),
+                user: client.user.lock().unwrap().clone(),
             })
             .await
             .unwrap();
@@ -92,14 +92,14 @@ mod test {
         }
         client
             .send_msg(UserMsg::UserJoined {
-                user: client.user.clone(),
+                user: client.user.lock().unwrap().clone(),
             })
             .await
             .unwrap();
         sleep(Duration::from_millis(1)).await;
 
         let sended_msg = TextMessage::new(
-            &client.user,
+            &client.user.lock().unwrap(),
             &client.room.lock().unwrap()._id,
             "some short message",
         );
@@ -117,14 +117,14 @@ mod test {
 
         client2
             .send_msg(UserMsg::SyncReq {
-                user: client2.user.clone(),
+                user: client2.user.lock().unwrap().clone(),
             })
             .await
             .unwrap();
 
         client2
             .send_msg(UserMsg::UserJoined {
-                user: client2.user.clone(),
+                user: client2.user.lock().unwrap().clone(),
             })
             .await
             .unwrap();
@@ -144,7 +144,9 @@ mod test {
             // assert_eq!(messages[0].room_id, sended_msg.room_id);
             // assert_eq!(messages[0].sender_addr, sended_msg.sender_addr);
             // assert_eq!(messages[0].content, sended_msg.content);
-            assert!(users.iter().any(|user| *user == client.user));
+            assert!(users
+                .iter()
+                .any(|user| *user == *client.user.lock().unwrap()));
         } else {
             assert!(false);
         }
@@ -154,7 +156,7 @@ mod test {
             assert!(false);
         }
 
-        sended_msg2.sender_addr = client2.user.addr.unwrap();
+        sended_msg2.sender_addr = client2.user.lock().unwrap().addr.unwrap();
         client2
             .send_msg(UserMsg::Normal {
                 msg: sended_msg2.clone(),
@@ -171,7 +173,7 @@ mod test {
 
         client
             .send_msg(UserMsg::BanReq {
-                addr: client2.user.addr.unwrap(),
+                addr: client2.user.lock().unwrap().addr.unwrap(),
             })
             .await
             .unwrap();
@@ -179,13 +181,13 @@ mod test {
         assert_eq!(
             client.recv_msg().await.unwrap(),
             MessageType::Server(ServerMsg::BanConfirm {
-                addr: client2.user.addr.unwrap()
+                addr: client2.user.lock().unwrap().addr.unwrap()
             })
         );
         assert_eq!(
             client.recv_msg().await.unwrap(),
             MessageType::Server(ServerMsg::UserLeft {
-                addr: client2.user.addr.unwrap(),
+                addr: client2.user.lock().unwrap().addr.unwrap(),
             })
         );
 

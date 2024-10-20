@@ -171,17 +171,18 @@ async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), A
 
                     client
                         .send_msg(UserMsg::SyncReq {
-                            user: client.user.clone(),
+                            user: client.user.lock().unwrap().clone(),
                         })
                         .await
                         .unwrap();
                     client
                         .send_msg(UserMsg::UserJoined {
-                            user: client.user.clone(),
+                            user: client.user.lock().unwrap().clone(),
                         })
                         .await
                         .unwrap();
-                    server.set_owner_addr(client.user.addr.unwrap());
+                    sleep(Duration::from_millis(200)).await;
+                    server.set_owner_addr(client.user.lock().unwrap().addr.unwrap());
 
                     ChatApp::new(client, config.light_mode).run().await?;
                     server.stop().await;

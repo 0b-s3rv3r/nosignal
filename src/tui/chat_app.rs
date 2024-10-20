@@ -156,7 +156,11 @@ impl<'a> ChatApp<'a> {
             if !self.parse_commands(&text).await {
                 let user = self.client.user.clone();
 
-                let msg = TextMessage::new(&user, &self.client.room.lock().unwrap()._id, &text);
+                let msg = TextMessage::new(
+                    &user.lock().unwrap(),
+                    &self.client.room.lock().unwrap()._id,
+                    &text,
+                );
 
                 match self
                     .client
@@ -165,10 +169,10 @@ impl<'a> ChatApp<'a> {
                 {
                     Ok(_) => self.messages.items.push(MsgItem::user_msg(
                         &msg,
-                        user.id.clone(),
-                        user.color.clone(),
+                        user.lock().unwrap().id.clone(),
+                        user.lock().unwrap().color.clone(),
                         &self.style,
-                        self.client.user.id.clone(),
+                        self.client.user.lock().unwrap().id.clone(),
                     )),
                     Err(err) => {
                         self.messages.items.push(MsgItem::info_msg(
@@ -193,7 +197,7 @@ impl<'a> ChatApp<'a> {
                             user.id.clone(),
                             user.color.clone(),
                             &self.style,
-                            self.client.user.id.clone(),
+                            self.client.user.lock().unwrap().id.clone(),
                         ));
                     }
                     UserMsg::UserJoined { user } => {
@@ -233,7 +237,7 @@ impl<'a> ChatApp<'a> {
                                         id,
                                         color,
                                         &self.style,
-                                        self.client.user.id.clone(),
+                                        self.client.user.lock().unwrap().id.clone(),
                                     )
                                 })
                                 .collect::<Vec<Text>>(),
@@ -247,7 +251,7 @@ impl<'a> ChatApp<'a> {
                         self.users.remove(&addr).unwrap();
                     }
                     ServerMsg::BanConfirm { addr } => {
-                        if addr == self.client.user.addr.unwrap() {
+                        if addr == self.client.user.lock().unwrap().addr.unwrap() {
                             self.messages.items.push(MsgItem::info_msg(
                                 "You has been banned from this server".to_string(),
                                 Color::Rgb(75, 75, 75),

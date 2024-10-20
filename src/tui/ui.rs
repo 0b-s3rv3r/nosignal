@@ -85,7 +85,9 @@ impl<B: Backend> Tui<B> {
                             .enumerate()
                             .map(|(n, (_, user))| {
                                 if n < 10 - 2 {
-                                    if user.addr.unwrap() == app.client.user.addr.unwrap() {
+                                    if user.addr.unwrap()
+                                        == app.client.user.lock().unwrap().addr.unwrap()
+                                    {
                                         Line::from(format!(
                                             "{} [{}]*",
                                             user.id,

@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Debug)]
 pub struct ChatClient {
     pub room: Arc<Mutex<RoomHeader>>,
-    pub user: User,
+    pub user: Arc<Mutex<User>>,
     transceiver: Option<Sender<TtMessage>>,
     in_receiver: Option<Receiver<Message>>,
     finisher: CancellationToken,
@@ -29,7 +29,7 @@ impl ChatClient {
     pub fn new(room: RoomHeader, user: User) -> Self {
         Self {
             room: Arc::new(Mutex::new(room)),
-            user,
+            user: Arc::new(Mutex::new(user)),
             transceiver: None,
             in_receiver: None,
             finisher: CancellationToken::new(),
@@ -51,6 +51,7 @@ impl ChatClient {
         let wcancel_token = self.finisher.child_token();
 
         let shared_room = self.room.clone();
+        let shared_user = self.user.clone();
         tokio::spawn(async move {
             while let Some(msg) = read.next().await {
                 if rcancel_token.is_cancelled() {
@@ -59,10 +60,12 @@ impl ChatClient {
                 match msg {
                     Ok(msg) => {
                         let deserialized_msg = Message::from(msg);
-                        if let MessageType::Server(ServerMsg::Sync { room_id, .. }) =
-                            &deserialized_msg.msg_type
+                        if let MessageType::Server(ServerMsg::Sync {
+                            room_id, user_addr, ..
+                        }) = &deserialized_msg.msg_type
                         {
                             shared_room.lock().unwrap()._id = room_id.clone();
+                            shared_user.lock().unwrap().addr = Some(*user_addr);
                         }
                         if let Err(err) = tx_in.send(deserialized_msg).await {
                             rcancel_token.cancel();
@@ -140,15 +143,12 @@ impl ChatClient {
                         self.disconnect();
                     }
                     ServerMsg::BanConfirm { addr } => {
-                        if *addr == self.user.addr.unwrap() {
+                        if *addr == self.user.lock().unwrap().addr.unwrap() {
                             self.disconnect();
                         }
                     }
                     ServerMsg::ServerShutdown => {
                         self.disconnect();
-                    }
-                    ServerMsg::Sync { user_addr, .. } => {
-                        self.user.addr = Some(*user_addr);
                     }
                     _ => {}
                 }
