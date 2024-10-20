@@ -2,7 +2,7 @@
 
 Single-executable and minimalistic tui chat written with spaghetti code.
 
-![example - conv](https://github.com/user-attachments/assets/2eb152d1-0c9c-46d7-a244-ec0a314a5f90)
+![Screenshot from 2024-10-20 23-06-15](https://github.com/user-attachments/assets/61401402-9823-4eed-a546-7d694ddaac21)
 
 Build
 ```
@@ -23,3 +23,21 @@ list, -l, --list      Lists all rooms
 set, -s, --set        Sets an application option
 help                  Print this message or the help of the given subcommand(s)
 ```
+
+User colors available
+- black
+- red
+- green
+- yellow
+- blue
+- magenta
+- cyan
+- gray
+- darkgray
+- lightred
+- lightgreen
+- lightyellow
+- lightblue
+- lightmagenta
+- lightcyan
+- white
