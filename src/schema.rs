@@ -1,3 +1,4 @@
+use crate::network::User;
 use enum_stringify::EnumStringify;
 use ratatui::style::Color as ratColor;
 use serde::{ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer};
@@ -56,14 +57,18 @@ impl From<RoomHeader> for Room {
 pub struct TextMessage {
     pub room_id: String,
     pub sender_addr: SocketAddr,
+    pub last_username: String,
+    pub last_color: Color,
     pub content: String,
     pub timestamp: Option<SystemTime>,
 }
 
 impl TextMessage {
-    pub fn new(user_addr: &SocketAddr, room_id: &str, msg: &str) -> Self {
+    pub fn new(user: &User, room_id: &str, msg: &str) -> Self {
         Self {
-            sender_addr: *user_addr,
+            sender_addr: user.addr.unwrap(),
+            last_username: user.id.clone(),
+            last_color: user.color.clone(),
             room_id: room_id.into(),
             content: msg.into(),
             timestamp: Some(SystemTime::now()),
@@ -72,8 +77,7 @@ impl TextMessage {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct LocalData {
-    pub id: usize,
+pub struct Config {
     pub user_id: String,
     #[serde(deserialize_with = "des_soc_addr")]
     #[serde(serialize_with = "ser_soc_addr")]
@@ -86,7 +90,7 @@ pub struct LocalData {
 #[serde(rename_all = "lowercase")]
 #[enum_stringify(case = "lower")]
 pub enum Color {
-    Black,
+    Black = 1,
     Red,
     Green,
     Yellow,

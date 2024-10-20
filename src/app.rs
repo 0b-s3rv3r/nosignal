@@ -3,11 +3,11 @@ use crate::{
     error::AppError,
     network::{
         client::ChatClient,
-        message::{Message, MessageType, ServerMsg, UserMsg},
+        message::{MessageType, ServerMsg, UserMsg},
         server::ChatServer,
         User,
     },
-    schema::{Color, LocalData, RoomHeader, ServerRoom},
+    schema::{Color, Config, RoomHeader, ServerRoom},
     tui::chat_app::ChatApp,
     util::{create_env_dir, get_unique_id, passwd_input, setup_logger},
 };
@@ -31,7 +31,7 @@ pub async fn run(cmd_req: CommandRequest) -> Result<(), AppError> {
     let log_path = path.join("errors.log");
     setup_logger(Some(&log_path)).expect(format!("{}", "Failed to set up logger.".red()).as_str());
 
-    let db_path = path.join("db.db");
+    let db_path = path.join("db");
     let db = Arc::new(Mutex::new(db_init(&db_path)?));
     run_option(cmd_req, db).await?;
     Ok(())
@@ -45,20 +45,17 @@ async fn run_option(cmd_req: CommandRequest, db: Arc<Mutex<DbRepo>>) -> Result<(
         CommandRequest::Join { id_or_address } => join_room(id_or_address, db).await?,
         CommandRequest::Delete { room_id } => delete_room(&db.lock().unwrap(), &room_id)?,
         CommandRequest::List => list_rooms_and_local_data(&db.lock().unwrap())?,
-        CommandRequest::Set { option, value } => {
-            set_local_data(&db.lock().unwrap(), &option, &value)?
-        }
+        CommandRequest::Set { option, value } => set_config(&db.lock().unwrap(), &option, &value)?,
         CommandRequest::Invalid => return Err(AppError::InvalidCommand),
     }
     Ok(())
 }
 
 pub fn db_init(db_path: &Path) -> pdbResult<DbRepo> {
-    let db = DbRepo::init(db_path)?;
+    let db = DbRepo::new(db_path)?;
 
     if db.local_data.count_documents()? == 0 {
-        db.local_data.insert_one(LocalData {
-            id: 0,
+        db.local_data.insert_one(Config {
             user_id: get_unique_id(),
             room_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 12345),
             color: Color::White,
@@ -140,7 +137,7 @@ fn list_rooms_and_local_data(db: &DbRepo) -> Result<(), AppError> {
 }
 
 async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), AppError> {
-    let local_data = db
+    let config = db
         .lock()
         .unwrap()
         .local_data
@@ -148,74 +145,77 @@ async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), A
         .unwrap()
         .unwrap();
     let user = User {
-        id: local_data.user_id,
+        id: config.user_id,
         addr: None,
-        color: local_data.color,
+        color: config.color,
     };
 
     match id_or_addr {
-        IdOrAddr::Id(room_id) => match find_room(&db.lock().unwrap(), &room_id)? {
-            Either::Left(server_room) => {
-                let room_header = server_room.room_header();
+        IdOrAddr::Id(room_id) => {
+            let founded_room = find_room(&db.lock().unwrap(), &room_id)?;
+            match founded_room {
+                Either::Left(server_room) => {
+                    let room_header = server_room.room_header();
+                    let mut server = ChatServer::new(server_room, db).await;
+                    server.run().await?;
+                    sleep(Duration::from_millis(100)).await;
 
-                let mut server = ChatServer::new(server_room, db.clone()).await.unwrap();
-                server.run().await.unwrap();
-                sleep(Duration::from_secs(1)).await;
-
-                let mut client = ChatClient::new(room_header, user);
-                if client.connect().await.is_err() {
-                    return Err(AppError::ConnectionRefused);
-                }
-                sleep(Duration::from_secs(1)).await;
-                if !client.is_ok() {
-                    return Err(AppError::ConnectionRefused);
-                }
-
-                let mut app = ChatApp::new(client, false);
-                app.run().await?;
-
-                server.stop().await;
-            }
-            Either::Right(room_header) => {
-                let mut client = ChatClient::new(room_header, user.clone());
-                if client.connect().await.is_err() {
-                    return Err(AppError::ConnectionRefused);
-                }
-                sleep(Duration::from_secs(1)).await;
-                while let Some(MessageType::Server(ServerMsg::AuthReq { passwd_required })) =
-                    client.recv_msg().await
-                {
-                    if passwd_required {
-                        client
-                            .send_msg(Message::from((UserMsg::Auth, Some(passwd_input()))))
-                            .await
-                            .unwrap();
+                    let mut client = ChatClient::new(room_header, user);
+                    if client.connect().await.is_err() {
+                        return Err(AppError::ConnectionRefused);
                     }
+                    sleep(Duration::from_millis(100)).await;
+                    if !client.is_ok() {
+                        return Err(AppError::ConnectionRefused);
+                    }
+
+                    client
+                        .send_msg(UserMsg::SyncReq {
+                            user: client.user.clone(),
+                        })
+                        .await
+                        .unwrap();
+                    client
+                        .send_msg(UserMsg::UserJoined {
+                            user: client.user.clone(),
+                        })
+                        .await
+                        .unwrap();
+
+                    ChatApp::new(client, config.light_mode).run().await?;
+                    server.stop().await;
                 }
-                if !client.is_ok() {
-                    return Err(AppError::ConnectionRefused);
+                Either::Right(room_header) => {
+                    let mut client = ChatClient::new(room_header, user.clone());
+                    if client.connect().await.is_err() {
+                        return Err(AppError::ConnectionRefused);
+                    }
+                    sleep(Duration::from_millis(100)).await;
+                    while let Some(MessageType::Server(ServerMsg::AuthReq { passwd_required })) =
+                        client.recv_msg().await
+                    {
+                        if passwd_required {
+                            client.set_passwd(&passwd_input());
+                            client.send_msg(UserMsg::Auth).await.unwrap()
+                        }
+                    }
+                    if !client.is_ok() {
+                        return Err(AppError::ConnectionRefused);
+                    }
+
+                    client
+                        .send_msg(UserMsg::SyncReq { user: user.clone() })
+                        .await
+                        .unwrap();
+                    client
+                        .send_msg(UserMsg::UserJoined { user: user.clone() })
+                        .await
+                        .unwrap();
+
+                    ChatApp::new(client, false).run().await?;
                 }
-
-                client
-                    .send_msg(Message::from((
-                        UserMsg::SyncReq { user: user.clone() },
-                        client.room.lock().unwrap().passwd.clone(),
-                    )))
-                    .await
-                    .unwrap();
-
-                client
-                    .send_msg(Message::from((
-                        UserMsg::UserJoined { user: user.clone() },
-                        client.room.lock().unwrap().passwd.clone(),
-                    )))
-                    .await
-                    .unwrap();
-
-                let mut app = ChatApp::new(client, false);
-                app.run().await?;
             }
-        },
+        }
         IdOrAddr::Addr(addr) => {
             let room_header = RoomHeader {
                 _id: String::from(""),
@@ -227,17 +227,18 @@ async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), A
             if client.connect().await.is_err() {
                 return Err(AppError::ConnectionRefused);
             }
-            sleep(Duration::from_secs(1)).await;
+            sleep(Duration::from_millis(100)).await;
             while let Some(MessageType::Server(ServerMsg::AuthReq { passwd_required })) =
                 client.recv_msg().await
             {
-                if db
+                let found_in_db = db
                     .lock()
                     .unwrap()
                     .room_headers
                     .find_one(doc! {"addr": addr.clone()})?
-                    .is_none()
-                {
+                    .is_none();
+
+                if found_in_db {
                     db.lock()
                         .unwrap()
                         .room_headers
@@ -245,10 +246,8 @@ async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), A
                 }
 
                 if passwd_required {
-                    client
-                        .send_msg(Message::from((UserMsg::Auth, Some(passwd_input()))))
-                        .await
-                        .unwrap();
+                    client.set_passwd(&passwd_input());
+                    client.send_msg(UserMsg::Auth).await.unwrap()
                 }
             }
             if !client.is_ok() {
@@ -256,33 +255,25 @@ async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), A
             }
 
             client
-                .send_msg(Message::from((
-                    UserMsg::SyncReq { user: user.clone() },
-                    client.room.lock().unwrap().passwd.clone(),
-                )))
+                .send_msg(UserMsg::SyncReq { user: user.clone() })
                 .await
                 .unwrap();
-
             client
-                .send_msg(Message::from((
-                    UserMsg::UserJoined { user: user.clone() },
-                    client.room.lock().unwrap().passwd.clone(),
-                )))
+                .send_msg(UserMsg::UserJoined { user: user.clone() })
                 .await
                 .unwrap();
 
-            let mut app = ChatApp::new(client, false);
-            app.run().await?;
+            ChatApp::new(client, false).run().await?;
         }
     }
     Ok(())
 }
 
-fn set_local_data(db: &DbRepo, option: &str, value: &str) -> Result<(), AppError> {
+fn set_config(db: &DbRepo, option: &str, value: &str) -> Result<(), AppError> {
     match option {
         "user_id" => {
             db.local_data.update_one(
-                doc! {"id": 0},
+                doc! {},
                 doc! {"$set": doc! {
                     option: value
                 }},
@@ -293,7 +284,7 @@ fn set_local_data(db: &DbRepo, option: &str, value: &str) -> Result<(), AppError
                 return Err(AppError::InvalidArgument);
             }
             db.local_data.update_one(
-                doc! {"id": 0},
+                doc! {},
                 doc! {"$set": doc! {
                     option: value
                 }},
@@ -304,7 +295,7 @@ fn set_local_data(db: &DbRepo, option: &str, value: &str) -> Result<(), AppError
                 return Err(AppError::InvalidArgument);
             }
             db.local_data.update_one(
-                doc! {"id": 0},
+                doc! {},
                 doc! {"$set": doc! {
                     option: value
                 }},
@@ -313,7 +304,7 @@ fn set_local_data(db: &DbRepo, option: &str, value: &str) -> Result<(), AppError
         "light_mode" => {
             if let Ok(state) = bool::from_str(value) {
                 db.local_data.update_one(
-                    doc! {"id": 0},
+                    doc! {},
                     doc! {"$set": doc! {
                         option: state
                     }},
@@ -460,21 +451,73 @@ fn config_clap() -> ArgMatches {
 
 #[cfg(test)]
 mod test {
-    use super::{Color, CommandRequest, LocalData};
+    use super::{Color, CommandRequest, Config};
     use crate::{
         app::{db_init, run_option},
         schema::ServerRoom,
     };
-    use polodb_core::bson::doc;
+    use polodb_core::{bson::doc, CollectionT};
     use std::{
         net::SocketAddr,
+        path::Path,
         str::FromStr,
         sync::{Arc, Mutex},
     };
 
+    #[test]
+    fn config_init() {
+        let db_path = Path::new("db");
+        let db = db_init(&db_path).unwrap();
+
+        let local_data = Config {
+            user_id: "*".into(),
+            room_addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
+            color: Color::White,
+            light_mode: false,
+        };
+
+        let local_data_from_db = db.local_data.find_one(doc! {}).unwrap().unwrap();
+
+        assert_eq!(local_data_from_db.room_addr, local_data.room_addr);
+        assert_eq!(local_data_from_db.color, local_data.color);
+        assert_eq!(local_data_from_db.light_mode, local_data.light_mode);
+
+        std::fs::remove_dir_all(&db_path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn config_setting() {
+        let db_path = Path::new("db");
+        let db = Arc::new(Mutex::new(db_init(&db_path).unwrap()));
+
+        run_option(
+            CommandRequest::Set {
+                option: "user_id".to_owned(),
+                value: "someuser".to_owned(),
+            },
+            db.clone(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            db.lock()
+                .unwrap()
+                .local_data
+                .find_one(doc! {})
+                .unwrap()
+                .unwrap()
+                .user_id,
+            "someuser"
+        );
+
+        std::fs::remove_dir_all(&db_path).unwrap();
+    }
+
     #[tokio::test]
     async fn new_room_creation() {
-        let db = Arc::new(Mutex::new(db_init(None).unwrap()));
+        let db_path = Path::new("db");
+        let db = Arc::new(Mutex::new(db_init(&db_path).unwrap()));
 
         let room_with_custom_values = ServerRoom {
             _id: "someroom".into(),
@@ -529,11 +572,14 @@ mod test {
                 .unwrap(),
             room_with_default_values
         );
+
+        std::fs::remove_dir_all(&db_path).unwrap();
     }
 
     #[tokio::test]
     async fn room_deletion() {
-        let db = Arc::new(Mutex::new(db_init(None).unwrap()));
+        let db_path = Path::new("db");
+        let db = Arc::new(Mutex::new(db_init(&db_path).unwrap()));
 
         let room = ServerRoom {
             _id: "someroom".into(),
@@ -579,50 +625,7 @@ mod test {
                 .unwrap(),
             None
         );
-    }
 
-    #[test]
-    fn local_data_default_init() {
-        let db = db_init(None).unwrap();
-
-        let local_data = LocalData {
-            id: 0,
-            user_id: "*".into(),
-            room_addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
-            color: Color::White,
-            light_mode: false,
-        };
-
-        let local_data_from_db = db.local_data.find_one(None).unwrap().unwrap();
-
-        assert_eq!(local_data_from_db.room_addr, local_data.room_addr);
-        assert_eq!(local_data_from_db.color, local_data.color);
-        assert_eq!(local_data_from_db.light_mode, local_data.light_mode);
-    }
-
-    #[tokio::test]
-    async fn local_data_setting() {
-        let db = Arc::new(Mutex::new(db_init(None).unwrap()));
-
-        run_option(
-            CommandRequest::Set {
-                option: "user_id".to_owned(),
-                value: "someuser".to_owned(),
-            },
-            db.clone(),
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(
-            db.lock()
-                .unwrap()
-                .local_data
-                .find_one(doc! {"_id": 0})
-                .unwrap()
-                .unwrap()
-                .user_id,
-            "someuser"
-        );
+        std::fs::remove_dir_all(&db_path).unwrap();
     }
 }

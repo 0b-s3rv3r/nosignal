@@ -1,18 +1,19 @@
-use crate::error::AppError;
-use crate::network::client::ChatClient;
-use crate::network::{
-    message::{Message, MessageType, ServerMsg, UserMsg},
-    User,
+use crate::{
+    error::AppError,
+    network::{
+        client::ChatClient,
+        message::{MessageType, ServerMsg, UserMsg},
+        User,
+    },
+    schema::TextMessage,
+    tui::ui::{ChatStyle, MsgItem, PopupState, StatefulArea, StatefulList, Tui},
 };
-use crate::schema::TextMessage;
-use crate::tui::ui::{ChatStyle, MsgItem, PopupState, StatefulArea, StatefulList, Tui};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use log::{info, warn};
 use ratatui::{prelude::*, style::Style};
 use regex::Regex;
 use std::collections::HashMap;
-use std::io;
-use std::net::SocketAddr;
+use std::{io, net::SocketAddr};
 use tokio::time::Duration;
 use tui_textarea::CursorMove;
 
@@ -154,22 +155,19 @@ impl<'a> ChatApp<'a> {
         if let Some(text) = self.msg_area.get_text() {
             if !self.parse_commands(&text).await {
                 let user = self.client.user.clone();
-                let room = self.client.room.lock().unwrap();
-                let msg = TextMessage::new(&user.addr.unwrap(), &room._id, &text);
+
+                let msg = TextMessage::new(&user, &self.client.room.lock().unwrap()._id, &text);
 
                 match self
                     .client
-                    .send_msg(Message::from((
-                        UserMsg::Normal { msg: msg.clone() },
-                        room.passwd.clone(),
-                    )))
+                    .send_msg(UserMsg::Normal { msg: msg.clone() })
                     .await
                 {
                     Ok(_) => self.messages.items.push(MsgItem::user_msg(
                         &msg,
+                        user.id.clone(),
                         user.color.clone(),
                         &self.style,
-                        user.id.clone(),
                         self.client.user.id.clone(),
                     )),
                     Err(err) => {
@@ -192,9 +190,9 @@ impl<'a> ChatApp<'a> {
                         let user = self.users.get(&msg.sender_addr).unwrap();
                         self.messages.items.push(MsgItem::user_msg(
                             &msg,
+                            user.id.clone(),
                             user.color.clone(),
                             &self.style,
-                            user.id.clone(),
                             self.client.user.id.clone(),
                         ));
                     }
@@ -221,14 +219,20 @@ impl<'a> ChatApp<'a> {
 
                         self.messages.items.append(
                             &mut messages
-                                .iter()
+                                .into_iter()
                                 .map(|msg| {
-                                    let user = self.users.get(&msg.sender_addr).unwrap();
+                                    let (id, color) =
+                                        if let Some(user) = self.users.get(&msg.sender_addr) {
+                                            (user.id.clone(), user.color.clone())
+                                        } else {
+                                            (msg.last_username.clone(), msg.last_color.clone())
+                                        };
+
                                     MsgItem::user_msg(
-                                        msg,
-                                        user.color.clone(),
+                                        &msg,
+                                        id,
+                                        color,
                                         &self.style,
-                                        user.id.clone(),
                                         self.client.user.id.clone(),
                                     )
                                 })

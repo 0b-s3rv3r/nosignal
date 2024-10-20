@@ -106,7 +106,7 @@ impl<B: Backend> Tui<B> {
                             })
                             .collect::<Text>(),
                     ),
-                    width: 25,
+                    width: 32,
                     height: 25,
                 })
                 .style(app.style.block)
@@ -305,9 +305,9 @@ impl MsgItem {
 
     pub fn user_msg<'a>(
         text_msg: &TextMessage,
+        user_id: String,
         user_color: impl Into<Color>,
         chat_style: &ChatStyle,
-        user_id: String,
         target_user: String,
     ) -> Text<'a> {
         let mut text = Text::from(Line::from(vec![

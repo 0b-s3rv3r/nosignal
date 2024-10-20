@@ -101,9 +101,18 @@ impl ChatClient {
         !self.finisher.is_cancelled()
     }
 
-    pub async fn send_msg(&self, msg: Message) -> Result<(), SendError<TtMessage>> {
+    pub fn set_passwd(&mut self, passwd: &str) {
+        self.room.lock().unwrap().passwd = Some(passwd.to_string());
+    }
+
+    pub async fn send_msg(&self, msg: impl Into<MessageType>) -> Result<(), SendError<TtMessage>> {
         if let Some(transceiver) = &self.transceiver {
-            transceiver.send(msg.to_ttmessage()).await?
+            transceiver
+                .send(
+                    Message::from((msg.into(), self.room.lock().unwrap().passwd.clone()))
+                        .to_ttmessage(),
+                )
+                .await?
         }
         Ok(())
     }
@@ -148,10 +157,6 @@ impl ChatClient {
     }
 
     pub async fn ban(&self, addr: &SocketAddr) -> Result<(), SendError<TtMessage>> {
-        self.send_msg(Message::from((
-            UserMsg::BanReq { addr: *addr },
-            self.room.lock().unwrap().passwd.clone(),
-        )))
-        .await
+        self.send_msg(UserMsg::BanReq { addr: *addr }).await
     }
 }

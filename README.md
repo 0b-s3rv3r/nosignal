@@ -1,18 +1,17 @@
 # 💬kioto
 
-Single-executable and minimalistic tui chat.
-
+Single-executable and minimalistic tui chat written with spaghetti code.
 
 ![example - conv](https://github.com/user-attachments/assets/2eb152d1-0c9c-46d7-a244-ec0a314a5f90)
 
-Run developement
+Build
 ```
 cargo build
 ```
 
 Run tests
 ```
-cargo test
+cargo test -- --test-threads=1
 ```
 
 Commands

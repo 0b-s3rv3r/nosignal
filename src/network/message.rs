@@ -47,9 +47,9 @@ pub enum MessageType {
 pub enum UserMsg {
     Normal { msg: TextMessage },
     UserJoined { user: User },
-    Auth,
     SyncReq { user: User },
     BanReq { addr: SocketAddr },
+    Auth,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -71,6 +71,18 @@ pub enum ServerMsg {
         addr: SocketAddr,
     },
     ServerShutdown,
+}
+
+impl From<UserMsg> for MessageType {
+    fn from(value: UserMsg) -> Self {
+        MessageType::User(value)
+    }
+}
+
+impl From<ServerMsg> for MessageType {
+    fn from(value: ServerMsg) -> Self {
+        MessageType::Server(value)
+    }
 }
 
 impl From<TtMessage> for Message {

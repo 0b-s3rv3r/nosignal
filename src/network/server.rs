@@ -40,13 +40,13 @@ pub struct ChatServer {
 }
 
 impl ChatServer {
-    pub async fn new(room: ServerRoom, db: Arc<Mutex<DbRepo>>) -> io::Result<Self> {
-        Ok(Self {
+    pub async fn new(room: ServerRoom, db: Arc<Mutex<DbRepo>>) -> ChatServer {
+        Self {
             peer_map: PeerMap::new(Mutex::new(HashMap::new())),
             room: Arc::new(Mutex::new(room)),
             db,
             finisher: CancellationToken::new(),
-        })
+        }
     }
 
     pub async fn run(&mut self) -> io::Result<()> {
@@ -141,7 +141,6 @@ impl ChatServer {
             &addr,
         );
 
-        // how ugly and stupid it is
         let unauthorized = Arc::new(Mutex::new(false));
         let first_joined = Arc::new(Mutex::new(false));
 
@@ -236,7 +235,6 @@ impl ChatServer {
                         peer_map.clone(),
                         &addr,
                     );
-                    println!("tutaj nie ma autoryzacji");
                     return true;
                 }
             } else {
@@ -248,7 +246,6 @@ impl ChatServer {
                     peer_map.clone(),
                     &addr,
                 );
-                println!("tutaj nie ma autoryzacji");
                 return true;
             }
         }
@@ -268,7 +265,7 @@ impl ChatServer {
                         Some(&addr),
                     );
                     if let Err(err) = db.lock().unwrap().messages.insert_one(text_msg) {
-                        error!("{}", err);
+                        warn!("{}", err);
                     }
                 }
                 UserMsg::UserJoined { user } => {
@@ -280,7 +277,7 @@ impl ChatServer {
                             room.lock().unwrap().passwd.clone(),
                         )),
                         peer_map.clone(),
-                        Some(&addr),
+                        None,
                     );
                 }
                 UserMsg::SyncReq { user } => {

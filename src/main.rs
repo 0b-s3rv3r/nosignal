@@ -31,11 +31,12 @@ async fn main() {
 
 // example chat session, because db in proper version above is broken
 // use db::DbRepo;
-// use network::message::{Message, MessageType, ServerMsg, UserMsg};
+// use network::message::{MessageType, ServerMsg, UserMsg};
 // use network::server::ChatServer;
 // use network::{client::ChatClient, User};
 // use schema::{Color, ServerRoom};
 // use std::net::SocketAddr;
+// use std::path::Path;
 // use std::str::FromStr;
 // use std::sync::{Arc, Mutex};
 // use std::time::Duration;
@@ -77,11 +78,10 @@ async fn main() {
 //         color: Color::LightGreen,
 //     };
 //
-//     let db = Arc::new(Mutex::new(DbRepo::init(None).unwrap()));
-//
 //     match t.as_str() {
 //         "server" => {
-//             let mut server = ChatServer::new(room.clone(), db).await.unwrap();
+//             let db = Arc::new(Mutex::new(DbRepo::new(Path::new("db")).unwrap()));
+//             let mut server = ChatServer::new(room.clone(), db).await;
 //             server.run().await.unwrap();
 //             sleep(Duration::from_secs(1)).await;
 //
@@ -97,20 +97,14 @@ async fn main() {
 //             }
 //
 //             client
-//                 .send_msg(Message::from((
-//                     UserMsg::SyncReq { user: user.clone() },
-//                     room.passwd.clone(),
-//                 )))
+//                 .send_msg(UserMsg::SyncReq { user: user.clone() })
 //                 .await
 //                 .unwrap();
 //
 //             client
-//                 .send_msg(Message::from((
-//                     UserMsg::UserJoined {
-//                         user: client.user.clone(),
-//                     },
-//                     room.passwd.clone(),
-//                 )))
+//                 .send_msg(UserMsg::UserJoined {
+//                     user: client.user.clone(),
+//                 })
 //                 .await
 //                 .unwrap();
 //
@@ -130,32 +124,21 @@ async fn main() {
 //                 client.recv_msg().await
 //             {
 //                 if passwd_required {
-//                     let passwd = Some(passwd_input());
-//                     client
-//                         .send_msg(Message::from((UserMsg::Auth, passwd.clone())))
-//                         .await
-//                         .unwrap();
-//                     client.room.lock().unwrap().passwd = passwd;
+//                     client.set_passwd(&passwd_input());
 //                 }
 //             }
 //
 //             client
-//                 .send_msg(Message::from((
-//                     UserMsg::SyncReq {
-//                         user: user2.clone(),
-//                     },
-//                     client.room.lock().unwrap().passwd.clone(),
-//                 )))
+//                 .send_msg(UserMsg::SyncReq {
+//                     user: client.user.clone(),
+//                 })
 //                 .await
 //                 .unwrap();
 //
 //             client
-//                 .send_msg(Message::from((
-//                     UserMsg::UserJoined {
-//                         user: client.user.clone(),
-//                     },
-//                     client.room.lock().unwrap().passwd.clone(),
-//                 )))
+//                 .send_msg(UserMsg::UserJoined {
+//                     user: client.user.clone(),
+//                 })
 //                 .await
 //                 .unwrap();
 //
