@@ -34,6 +34,7 @@ type Unauthorized = bool;
 
 pub struct ChatServer {
     pub(super) room: Arc<Mutex<ServerRoom>>,
+    pub owner_addr: Arc<Mutex<Option<SocketAddr>>>,
     peer_map: PeerMap,
     db: Arc<Mutex<DbRepo>>,
     finisher: CancellationToken,
@@ -43,6 +44,7 @@ impl ChatServer {
     pub async fn new(room: ServerRoom, db: Arc<Mutex<DbRepo>>) -> ChatServer {
         Self {
             peer_map: PeerMap::new(Mutex::new(HashMap::new())),
+            owner_addr: Arc::new(Mutex::new(None)),
             room: Arc::new(Mutex::new(room)),
             db,
             finisher: CancellationToken::new(),
@@ -55,6 +57,7 @@ impl ChatServer {
         let db = self.db.clone();
         let addr = self.room.lock().unwrap().addr;
         let cloned_token = self.finisher.clone();
+        let owner_addr = self.owner_addr.clone();
 
         tokio::spawn(async move {
             let cloned_token = cloned_token.clone();
@@ -83,6 +86,7 @@ impl ChatServer {
                                             room.clone(),
                                             db.clone(),
                                             cloned_token_.clone(),
+                                            owner_addr.clone(),
                                         ));
                                     }
                                 }
@@ -108,6 +112,10 @@ impl ChatServer {
         Ok(())
     }
 
+    pub fn set_owner_addr(&self, addr: SocketAddr) {
+        *self.owner_addr.lock().unwrap() = Some(addr);
+    }
+
     pub async fn stop(&mut self) {
         Self::send_to_all(
             Message::from(ServerMsg::ServerShutdown),
@@ -125,6 +133,7 @@ impl ChatServer {
         room: Arc<Mutex<ServerRoom>>,
         db: Arc<Mutex<DbRepo>>,
         finisher: CancellationToken,
+        owner_addr: Arc<Mutex<Option<SocketAddr>>>,
     ) -> Result<(), TtError> {
         let ws_stream = accept_async(stream).await?;
 
@@ -149,8 +158,14 @@ impl ChatServer {
             if let MessageType::User(UserMsg::UserJoined { .. }) = msg.msg_type {
                 *first_joined.lock().unwrap() = true;
             }
-            *unauthorized.clone().lock().unwrap() =
-                Self::handle_message(msg, peer_map.clone(), addr, room.clone(), db.clone());
+            *unauthorized.clone().lock().unwrap() = Self::handle_message(
+                msg,
+                peer_map.clone(),
+                addr,
+                room.clone(),
+                db.clone(),
+                owner_addr.clone(),
+            );
 
             let is_banned = room.lock().unwrap().banned_addrs.iter().any(|&a| a == addr);
 
@@ -223,6 +238,7 @@ impl ChatServer {
         addr: SocketAddr,
         room: Arc<Mutex<ServerRoom>>,
         db: Arc<Mutex<DbRepo>>,
+        owner_addr: Arc<Mutex<Option<SocketAddr>>>,
     ) -> Unauthorized {
         if let Some(passwd) = &room.lock().unwrap().passwd {
             if let Some(msg_passwd) = &msg.passwd {
@@ -334,28 +350,32 @@ impl ChatServer {
                     );
                 }
                 UserMsg::BanReq { addr: banned_addr } => {
-                    Self::send_to_all(
-                        Message::from(ServerMsg::BanConfirm { addr: banned_addr }),
-                        peer_map.clone(),
-                        None,
-                    );
+                    if let Some(owner_addr) = *owner_addr.lock().unwrap() {
+                        if addr == owner_addr {
+                            Self::send_to_all(
+                                Message::from(ServerMsg::BanConfirm { addr: banned_addr }),
+                                peer_map.clone(),
+                                None,
+                            );
 
-                    room.lock().unwrap().banned_addrs.push(banned_addr);
-                    peer_map.lock().unwrap().remove(&banned_addr);
-                    let result = db.lock().unwrap().server_rooms.update_one(
-                        doc! {"_id": room.lock().unwrap()._id.clone()},
-                        doc! {"$set": doc! {
-                            "banned_addrs": room
-                                .lock()
-                                .unwrap()
-                                .banned_addrs
-                                .iter()
-                                .map(|sa| sa.to_string())
-                                .collect::<Vec<String>>()
-                        }},
-                    );
-                    if let Err(err) = result {
-                        error!("{}", err);
+                            room.lock().unwrap().banned_addrs.push(banned_addr);
+                            peer_map.lock().unwrap().remove(&banned_addr);
+                            let result = db.lock().unwrap().server_rooms.update_one(
+                                doc! {"_id": room.lock().unwrap()._id.clone()},
+                                doc! {"$set": doc! {
+                                    "banned_addrs": room
+                                        .lock()
+                                        .unwrap()
+                                        .banned_addrs
+                                        .iter()
+                                        .map(|sa| sa.to_string())
+                                        .collect::<Vec<String>>()
+                                }},
+                            );
+                            if let Err(err) = result {
+                                warn!("{}", err);
+                            }
+                        }
                     }
                 }
                 _ => {}

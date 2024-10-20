@@ -181,6 +181,7 @@ async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), A
                         })
                         .await
                         .unwrap();
+                    server.set_owner_addr(client.user.addr.unwrap());
 
                     ChatApp::new(client, config.light_mode).run().await?;
                     server.stop().await;

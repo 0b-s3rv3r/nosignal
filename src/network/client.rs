@@ -63,7 +63,6 @@ impl ChatClient {
                             &deserialized_msg.msg_type
                         {
                             shared_room.lock().unwrap()._id = room_id.clone();
-                            println!("received id");
                         }
                         if let Err(err) = tx_in.send(deserialized_msg).await {
                             rcancel_token.cancel();
