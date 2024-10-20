@@ -154,7 +154,7 @@ impl ChatServer {
         let first_joined = Arc::new(Mutex::new(false));
 
         let broadcast_incoming = incoming.try_for_each(|msg| {
-            let msg = Message::from(msg);
+            let msg = Message::try_from(msg).unwrap();
             if let MessageType::User(UserMsg::UserJoined { .. }) = msg.msg_type {
                 *first_joined.lock().unwrap() = true;
             }

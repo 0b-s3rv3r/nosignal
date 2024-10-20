@@ -85,9 +85,14 @@ impl From<ServerMsg> for MessageType {
     }
 }
 
-impl From<TtMessage> for Message {
-    fn from(value: TtMessage) -> Self {
-        from_str(&value.to_string()).unwrap()
+impl TryFrom<TtMessage> for Message {
+    type Error = bool;
+
+    fn try_from(value: TtMessage) -> Result<Self, Self::Error> {
+        match from_str(&value.to_string()) {
+            Ok(val) => Ok(val),
+            Err(_) => Err(false),
+        }
     }
 }
 

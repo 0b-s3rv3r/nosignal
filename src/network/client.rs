@@ -59,17 +59,22 @@ impl ChatClient {
                 }
                 match msg {
                     Ok(msg) => {
-                        let deserialized_msg = Message::from(msg);
-                        if let MessageType::Server(ServerMsg::Sync {
-                            room_id, user_addr, ..
-                        }) = &deserialized_msg.msg_type
-                        {
-                            shared_room.lock().unwrap()._id = room_id.clone();
-                            shared_user.lock().unwrap().addr = Some(*user_addr);
-                        }
-                        if let Err(err) = tx_in.send(deserialized_msg).await {
-                            rcancel_token.cancel();
-                            error!("Receiver dropped: {}", err);
+                        let deserialize_result = Message::try_from(msg);
+                        if let Ok(deserialized_msg) = &deserialize_result {
+                            if let MessageType::Server(ServerMsg::Sync {
+                                room_id, user_addr, ..
+                            }) = &deserialized_msg.msg_type
+                            {
+                                shared_room.lock().unwrap()._id = room_id.clone();
+                                shared_user.lock().unwrap().addr = Some(*user_addr);
+                            }
+
+                            if let Err(err) = tx_in.send(deserialized_msg.clone()).await {
+                                rcancel_token.cancel();
+                                error!("Receiver dropped: {}", err);
+                            }
+                        } else {
+                            warn!("Failed to desrialize from TtMessage in client");
                         }
                     }
                     Err(e) => {
