@@ -21,7 +21,7 @@ pub struct ChatClient {
     pub room: Arc<Mutex<RoomHeader>>,
     pub user: User,
     transceiver: Option<Sender<TtMessage>>,
-    in_receiver: Option<Receiver<TtMessage>>,
+    in_receiver: Option<Receiver<Message>>,
     finisher: CancellationToken,
 }
 
@@ -42,7 +42,7 @@ impl ChatClient {
         let (mut write, mut read) = ws_stream.split();
 
         let (tx, mut rx) = mpsc::channel::<TtMessage>(100);
-        let (tx_in, rx_in) = mpsc::channel::<TtMessage>(100);
+        let (tx_in, rx_in) = mpsc::channel::<Message>(100);
 
         self.transceiver = Some(tx);
         self.in_receiver = Some(rx_in);
@@ -50,6 +50,7 @@ impl ChatClient {
         let rcancel_token = self.finisher.child_token();
         let wcancel_token = self.finisher.child_token();
 
+        let shared_room = self.room.clone();
         tokio::spawn(async move {
             while let Some(msg) = read.next().await {
                 if rcancel_token.is_cancelled() {
@@ -57,7 +58,14 @@ impl ChatClient {
                 }
                 match msg {
                     Ok(msg) => {
-                        if let Err(err) = tx_in.send(msg).await {
+                        let deserialized_msg = Message::from(msg);
+                        if let MessageType::Server(ServerMsg::Sync { room_id, .. }) =
+                            &deserialized_msg.msg_type
+                        {
+                            shared_room.lock().unwrap()._id = room_id.clone();
+                            println!("received id");
+                        }
+                        if let Err(err) = tx_in.send(deserialized_msg).await {
                             rcancel_token.cancel();
                             error!("Receiver dropped: {}", err);
                         }
@@ -126,8 +134,7 @@ impl ChatClient {
                 return None;
             }
 
-            let msg_result = receiver.recv().await?;
-            let msg_type = Message::from(msg_result).msg_type;
+            let msg_type = receiver.recv().await?.msg_type;
             if let MessageType::Server(server_msg) = &msg_type {
                 match server_msg {
                     ServerMsg::AuthFailure => {
@@ -141,11 +148,8 @@ impl ChatClient {
                     ServerMsg::ServerShutdown => {
                         self.disconnect();
                     }
-                    ServerMsg::Sync {
-                        user_addr, room_id, ..
-                    } => {
+                    ServerMsg::Sync { user_addr, .. } => {
                         self.user.addr = Some(*user_addr);
-                        self.room.lock().unwrap()._id = room_id.to_string();
                     }
                     _ => {}
                 }

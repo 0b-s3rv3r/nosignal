@@ -231,20 +231,6 @@ async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), A
             while let Some(MessageType::Server(ServerMsg::AuthReq { passwd_required })) =
                 client.recv_msg().await
             {
-                let found_in_db = db
-                    .lock()
-                    .unwrap()
-                    .room_headers
-                    .find_one(doc! {"addr": addr.clone()})?
-                    .is_none();
-
-                if found_in_db {
-                    db.lock()
-                        .unwrap()
-                        .room_headers
-                        .insert_one(client.room.lock().unwrap().clone())?;
-                }
-
                 if passwd_required {
                     client.set_passwd(&passwd_input());
                     client.send_msg(UserMsg::Auth).await.unwrap()
@@ -262,6 +248,26 @@ async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), A
                 .send_msg(UserMsg::UserJoined { user: user.clone() })
                 .await
                 .unwrap();
+
+            while client.room.lock().unwrap()._id == String::from("") {
+                print!("dupa");
+                sleep(Duration::from_secs(1)).await;
+            }
+
+            sleep(Duration::from_secs(2)).await;
+            let found_in_db = db
+                .lock()
+                .unwrap()
+                .room_headers
+                .find_one(doc! {"addr": addr.clone()})?
+                .is_none();
+
+            if found_in_db {
+                db.lock()
+                    .unwrap()
+                    .room_headers
+                    .insert_one(client.room.lock().unwrap().clone())?;
+            }
 
             ChatApp::new(client, false).run().await?;
         }
