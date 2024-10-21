@@ -49,7 +49,6 @@ mod test {
             banned_addrs: vec![],
         };
         let header = room.room_header();
-
         let user = User {
             id: "user1".into(),
             addr: None,
@@ -67,10 +66,16 @@ mod test {
 
         let mut server = ChatServer::new(room, db.clone()).await;
         server.run().await.unwrap();
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_millis(100)).await;
         let mut client = ChatClient::new(header.clone(), user);
         client.connect().await.unwrap();
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_millis(100)).await;
+
+        if let MessageType::Server(ServerMsg::AuthReq { .. }) = client.recv_msg().await.unwrap() {
+            assert!(true);
+        } else {
+            assert!(false);
+        }
 
         client
             .send_msg(UserMsg::SyncReq {
@@ -78,33 +83,32 @@ mod test {
             })
             .await
             .unwrap();
-
-        if let MessageType::Server(ServerMsg::AuthReq { .. }) = client.recv_msg().await.unwrap() {
-            assert!(true);
-        } else {
-            assert!(false);
-        }
         sleep(Duration::from_millis(1)).await;
         if let MessageType::Server(ServerMsg::Sync { .. }) = client.recv_msg().await.unwrap() {
             assert!(true);
         } else {
             assert!(false);
         }
+        server.set_owner_addr(client.user.lock().unwrap().addr.unwrap());
+
         client
             .send_msg(UserMsg::UserJoined {
                 user: client.user.lock().unwrap().clone(),
             })
             .await
             .unwrap();
-        sleep(Duration::from_millis(1)).await;
+        sleep(Duration::from_millis(100)).await;
+        if let MessageType::User(UserMsg::UserJoined { .. }) = client.recv_msg().await.unwrap() {
+            assert!(true);
+        } else {
+            assert!(false);
+        }
 
         let sended_msg = TextMessage::new(
             &client.user.lock().unwrap(),
             &client.room.lock().unwrap()._id,
             "some short message",
         );
-        let mut sended_msg2 = sended_msg.clone();
-
         client
             .send_msg(UserMsg::Normal {
                 msg: sended_msg.clone(),
@@ -114,22 +118,7 @@ mod test {
 
         let mut client2 = ChatClient::new(header.clone(), user2);
         client2.connect().await.unwrap();
-
-        client2
-            .send_msg(UserMsg::SyncReq {
-                user: client2.user.lock().unwrap().clone(),
-            })
-            .await
-            .unwrap();
-
-        client2
-            .send_msg(UserMsg::UserJoined {
-                user: client2.user.lock().unwrap().clone(),
-            })
-            .await
-            .unwrap();
-
-        sleep(Duration::from_millis(1)).await;
+        sleep(Duration::from_millis(100)).await;
 
         if let MessageType::Server(ServerMsg::AuthReq { .. }) = client2.recv_msg().await.unwrap() {
             assert!(true);
@@ -137,13 +126,26 @@ mod test {
             assert!(false);
         }
 
+        client2
+            .send_msg(UserMsg::SyncReq {
+                user: client2.user.lock().unwrap().clone(),
+            })
+            .await
+            .unwrap();
+        client2
+            .send_msg(UserMsg::UserJoined {
+                user: client2.user.lock().unwrap().clone(),
+            })
+            .await
+            .unwrap();
+        sleep(Duration::from_millis(100)).await;
         if let MessageType::Server(ServerMsg::Sync {
             messages, users, ..
         }) = client2.recv_msg().await.unwrap()
         {
-            // assert_eq!(messages[0].room_id, sended_msg.room_id);
-            // assert_eq!(messages[0].sender_addr, sended_msg.sender_addr);
-            // assert_eq!(messages[0].content, sended_msg.content);
+            assert_eq!(messages[0].room_id, sended_msg.room_id);
+            assert_eq!(messages[0].sender_addr, sended_msg.sender_addr);
+            assert_eq!(messages[0].content, sended_msg.content);
             assert!(users
                 .iter()
                 .any(|user| *user == *client.user.lock().unwrap()));
@@ -155,7 +157,13 @@ mod test {
         } else {
             assert!(false);
         }
+        if let MessageType::User(UserMsg::UserJoined { .. }) = client2.recv_msg().await.unwrap() {
+            assert!(true);
+        } else {
+            assert!(false);
+        }
 
+        let mut sended_msg2 = sended_msg.clone();
         sended_msg2.sender_addr = client2.user.lock().unwrap().addr.unwrap();
         client2
             .send_msg(UserMsg::Normal {
@@ -163,7 +171,7 @@ mod test {
             })
             .await
             .unwrap();
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_millis(100)).await;
         let received_msg = client.recv_msg().await.unwrap();
         if let MessageType::User(UserMsg::Normal { msg }) = received_msg {
             assert_eq!(msg.room_id, sended_msg2.room_id);
@@ -177,7 +185,13 @@ mod test {
             })
             .await
             .unwrap();
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            client2.recv_msg().await.unwrap(),
+            MessageType::Server(ServerMsg::BanConfirm {
+                addr: client2.user.lock().unwrap().addr.unwrap()
+            })
+        );
         assert_eq!(
             client.recv_msg().await.unwrap(),
             MessageType::Server(ServerMsg::BanConfirm {

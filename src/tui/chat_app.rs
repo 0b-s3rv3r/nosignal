@@ -154,26 +154,27 @@ impl<'a> ChatApp<'a> {
 
         if let Some(text) = self.msg_area.get_text() {
             if !self.parse_commands(&text).await {
-                let user = self.client.user.clone();
-
                 let msg = TextMessage::new(
-                    &user.lock().unwrap(),
+                    &self.client.user.lock().unwrap(),
                     &self.client.room.lock().unwrap()._id,
                     &text,
                 );
 
-                match self
+                let send_result = self
                     .client
                     .send_msg(UserMsg::Normal { msg: msg.clone() })
-                    .await
-                {
-                    Ok(_) => self.messages.items.push(MsgItem::user_msg(
-                        &msg,
-                        user.lock().unwrap().id.clone(),
-                        user.lock().unwrap().color.clone(),
-                        &self.style,
-                        self.client.user.lock().unwrap().id.clone(),
-                    )),
+                    .await;
+                match send_result {
+                    Ok(_) => {
+                        let user_id = self.client.user.lock().unwrap().id.clone();
+                        self.messages.items.push(MsgItem::user_msg(
+                            &msg,
+                            user_id.clone(),
+                            self.client.user.lock().unwrap().color.clone(),
+                            &self.style,
+                            user_id,
+                        ));
+                    }
                     Err(err) => {
                         self.messages.items.push(MsgItem::info_msg(
                             "Failed sending message".to_string(),

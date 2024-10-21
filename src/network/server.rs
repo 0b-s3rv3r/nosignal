@@ -296,10 +296,34 @@ impl ChatServer {
                         None,
                     );
                 }
-                UserMsg::SyncReq { user } => {
-                    let mut updated_user = user;
-                    updated_user.addr = Some(addr);
-                    peer_map.lock().unwrap().get_mut(&addr).unwrap().1 = Some(updated_user);
+                UserMsg::SyncReq { mut user } => {
+                    user.addr = Some(addr);
+                    peer_map.lock().unwrap().get_mut(&addr).unwrap().1 = Some(user.clone());
+
+                    let check_msg = db
+                        .lock()
+                        .unwrap()
+                        .messages
+                        .find_one(doc! {"sender_addr": addr.to_string()});
+
+                    match check_msg {
+                        Ok(msg_result) => {
+                            if let Some(msg) = msg_result {
+                                if msg.last_username != user.id {
+                                    let update_result = db.lock().unwrap().messages.update_many(
+                                        doc! {"sender_addr": addr.to_string()},
+                                        doc! {"$set": doc! {
+                                            "last_username": user.id
+                                        }},
+                                    );
+                                    if let Err(err) = update_result {
+                                        warn!("{}", err);
+                                    }
+                                }
+                            }
+                        }
+                        Err(err) => warn!("{}", err),
+                    }
 
                     let messages_result = db
                         .lock()
