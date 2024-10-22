@@ -78,10 +78,10 @@ impl TextMessage {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
-    pub user_id: String,
+    pub username: String,
     #[serde(deserialize_with = "des_soc_addr")]
     #[serde(serialize_with = "ser_soc_addr")]
-    pub room_addr: SocketAddr,
+    pub listener_addr: SocketAddr,
     pub color: Color,
     pub light_mode: bool,
 }

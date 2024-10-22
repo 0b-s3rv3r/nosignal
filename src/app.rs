@@ -44,7 +44,7 @@ async fn run_option(cmd_req: CommandRequest, db: Arc<Mutex<DbRepo>>) -> Result<(
         }
         CommandRequest::Join { id_or_address } => join_room(id_or_address, db).await?,
         CommandRequest::Delete { room_id } => delete_room(&db.lock().unwrap(), &room_id)?,
-        CommandRequest::List => list_rooms_and_local_data(&db.lock().unwrap())?,
+        CommandRequest::List => list_rooms_and_config(&db.lock().unwrap())?,
         CommandRequest::Set { option, value } => set_config(&db.lock().unwrap(), &option, &value)?,
         CommandRequest::Invalid => return Err(AppError::InvalidCommand),
     }
@@ -56,8 +56,8 @@ pub fn db_init(db_path: &Path) -> pdbResult<DbRepo> {
 
     if db.local_data.count_documents()? == 0 {
         db.local_data.insert_one(Config {
-            user_id: get_unique_id(),
-            room_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 12345),
+            username: get_unique_id(),
+            listener_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 12345),
             color: Color::White,
             light_mode: false,
         })?;
@@ -74,7 +74,7 @@ fn create_room(db: &DbRepo, room_id: &str, password: bool) -> Result<(), AppErro
         .local_data
         .find_one(doc! {})?
         .ok_or(AppError::DataNotFound)?
-        .room_addr;
+        .listener_addr;
     let passwd = if password { Some(passwd_input()) } else { None };
 
     db.server_rooms.insert_one(ServerRoom {
@@ -108,15 +108,15 @@ fn delete_room(db: &DbRepo, room_id: &str) -> Result<(), AppError> {
     Err(AppError::NotExistingId)
 }
 
-fn list_rooms_and_local_data(db: &DbRepo) -> Result<(), AppError> {
+fn list_rooms_and_config(db: &DbRepo) -> Result<(), AppError> {
     let local_data = db
         .local_data
         .find_one(doc! {})?
         .ok_or(AppError::DataNotFound)?;
     let local_data_print = format!(
-        "Config:\n user_id: {}\n room_addr: {}\n color: {}\n light_mode: {}",
-        local_data.user_id,
-        local_data.room_addr.to_string(),
+        "Config:\n username: {}\n listener_addr: {}\n color: {}\n light_mode: {}",
+        local_data.username,
+        local_data.listener_addr.to_string(),
         local_data.color.to_string(),
         local_data.light_mode.to_string(),
     );
@@ -145,7 +145,7 @@ async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), A
         .unwrap()
         .unwrap();
     let user = User {
-        id: config.user_id,
+        id: config.username,
         addr: None,
         color: config.color,
     };
@@ -279,7 +279,7 @@ async fn join_room(id_or_addr: IdOrAddr, db: Arc<Mutex<DbRepo>>) -> Result<(), A
 
 fn set_config(db: &DbRepo, option: &str, value: &str) -> Result<(), AppError> {
     match option {
-        "user_id" => {
+        "username" => {
             db.local_data.update_one(
                 doc! {},
                 doc! {"$set": doc! {
@@ -287,7 +287,7 @@ fn set_config(db: &DbRepo, option: &str, value: &str) -> Result<(), AppError> {
                 }},
             )?;
         }
-        "room_addr" => {
+        "listener_addr" => {
             if SocketAddr::from_str(value).is_err() {
                 return Err(AppError::InvalidArgument);
             }
@@ -478,15 +478,15 @@ mod test {
         let db = db_init(&db_path).unwrap();
 
         let local_data = Config {
-            user_id: "*".into(),
-            room_addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
+            username: "*".into(),
+            listener_addr: SocketAddr::from_str("127.0.0.1:12345").unwrap(),
             color: Color::White,
             light_mode: false,
         };
 
         let local_data_from_db = db.local_data.find_one(doc! {}).unwrap().unwrap();
 
-        assert_eq!(local_data_from_db.room_addr, local_data.room_addr);
+        assert_eq!(local_data_from_db.listener_addr, local_data.listener_addr);
         assert_eq!(local_data_from_db.color, local_data.color);
         assert_eq!(local_data_from_db.light_mode, local_data.light_mode);
 
@@ -500,7 +500,7 @@ mod test {
 
         run_option(
             CommandRequest::Set {
-                option: "user_id".to_owned(),
+                option: "username".to_owned(),
                 value: "someuser".to_owned(),
             },
             db.clone(),
@@ -515,7 +515,7 @@ mod test {
                 .find_one(doc! {})
                 .unwrap()
                 .unwrap()
-                .user_id,
+                .username,
             "someuser"
         );
 
