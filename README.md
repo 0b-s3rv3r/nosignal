@@ -6,7 +6,7 @@ Single-executable and minimalistic tui chat written with spaghetti code.
 
 Build
 ```
-cargo build
+cargo build --release
 ```
 
 Run tests
